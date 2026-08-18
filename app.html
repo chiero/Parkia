@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chiclana Parking — Sistema</title>
+  <meta name="description" content="Sistema de gestión de cocheras Chiclana Parking.">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<a href="#main-content" class="skip-link">Saltar al contenido principal</a>
+
+<!-- Print area (hidden, used for receipt printing) -->
+<div id="print-area"></div>
+
+<!-- Mobile topbar (visible only below 900px, see styles.css) -->
+<div class="mobile-topbar" id="mobile-topbar">
+  <button class="btn-menu-toggle" id="btn-menu-toggle" aria-label="Abrir menú de navegación" aria-expanded="false" aria-controls="sidebar">☰</button>
+  <div class="logo-icon">🚗</div>
+  <span class="mobile-title" id="mobile-branch-name">Chiclana Parking</span>
+</div>
+
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+<div class="app-layout" id="app-layout">
+
+  <!-- ═══ SIDEBAR ═════════════════════════════════════════════ -->
+  <aside class="sidebar" id="sidebar">
+
+    <div class="sidebar-logo">
+      <div class="logo-wrap">
+        <div class="logo-icon">🚗</div>
+        <div class="logo-text">
+          <h2 id="branch-name">Chiclana Parking</h2>
+          <span>Gestión de Cocheras</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Branch selector (admin only) -->
+    <div class="branch-selector" id="branch-selector-wrap" style="display:none;">
+      <select class="form-control" id="branch-selector" title="Cambiar sucursal"></select>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Navegación principal">
+      <span class="nav-section-label">Principal</span>
+      <div class="nav-item active" data-view="dashboard" id="nav-dashboard" role="button" tabindex="0" aria-current="page">
+        <span class="nav-icon" aria-hidden="true">📊</span> Dashboard
+      </div>
+      <div class="nav-item" data-view="map" id="nav-map" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">🗺️</span> Mapa de Pisos
+        <span class="nav-badge hidden" id="nav-badge-map">0</span>
+      </div>
+      <div class="nav-item" data-view="scanner" id="nav-scanner" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">📷</span> Escanear Patente
+      </div>
+      <div class="nav-item" data-view="alerts" id="nav-alerts" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">🔔</span> Alertas
+        <span class="nav-badge hidden" id="nav-badge-alerts">0</span>
+      </div>
+
+      <span class="nav-section-label" style="margin-top:.75rem;">Gestión</span>
+      <div class="nav-item" data-view="clients" id="nav-clients" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">👥</span> Clientes
+      </div>
+      <div class="nav-item" data-view="payments" id="nav-payments" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">💰</span> Pagos
+      </div>
+
+      <span class="nav-section-label" id="admin-section-label" style="margin-top:.75rem;">Administración</span>
+      <div class="nav-item" data-view="prices" id="nav-prices" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">💲</span> Precios
+      </div>
+      <div class="nav-item" data-view="reports" id="nav-reports" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">📈</span> Reportes
+      </div>
+      <div class="nav-item" data-view="settings" id="nav-settings" role="button" tabindex="0">
+        <span class="nav-icon" aria-hidden="true">⚙️</span> Configuración
+      </div>
+    </nav>
+
+    <div class="sidebar-user">
+      <div class="user-avatar" id="user-avatar">A</div>
+      <div class="user-info">
+        <div class="user-name" id="user-name">Administrador</div>
+        <div class="user-role" id="user-role">admin</div>
+      </div>
+      <button class="btn-logout" id="btn-logout" title="Cerrar sesión" aria-label="Cerrar sesión">⎋</button>
+    </div>
+  </aside>
+
+  <!-- ═══ MAIN CONTENT ════════════════════════════════════════ -->
+  <main class="main-content" id="main-content">
+
+    <!-- ── DASHBOARD ─────────────────────────────────────── -->
+    <section class="view active" id="view-dashboard">
+      <div class="page-header">
+        <div>
+          <h2>Dashboard</h2>
+          <p id="dashboard-greeting">Bienvenido al sistema de gestión</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary btn-sm" onclick="App.navigate('map')">🗺️ Ver mapa</button>
+        </div>
+      </div>
+      <div class="page-body" id="dashboard-body"></div>
+    </section>
+
+    <!-- ── MAPA DE PISOS ──────────────────────────────────── -->
+    <section class="view" id="view-map">
+      <div class="page-header">
+        <div>
+          <h2>Mapa de Pisos</h2>
+          <p>Estado en tiempo real de todos los lugares</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-map-refresh">🔄 Actualizar</button>
+        </div>
+      </div>
+      <div class="page-body" id="map-body"></div>
+    </section>
+
+    <!-- ── ESCANEAR PATENTE ──────────────────────────────── -->
+    <section class="view" id="view-scanner">
+      <div class="page-header">
+        <div>
+          <h2>Escanear Patente</h2>
+          <p>Usá la cámara para leer una patente y ver el estado del vehículo</p>
+        </div>
+      </div>
+      <div class="page-body" id="scanner-body"></div>
+    </section>
+
+    <!-- ── ALERTAS ────────────────────────────────────────── -->
+    <section class="view" id="view-alerts">
+      <div class="page-header">
+        <div>
+          <h2>Alertas</h2>
+          <p>Vencimientos, deudores y avisos del sistema</p>
+        </div>
+      </div>
+      <div class="page-body" id="alerts-body"></div>
+    </section>
+
+    <!-- ── CLIENTES ───────────────────────────────────────── -->
+    <section class="view" id="view-clients">
+      <div class="page-header">
+        <div>
+          <h2>Clientes</h2>
+          <p>Gestión de clientes y contratos</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-primary btn-sm" id="btn-new-client">+ Nuevo cliente</button>
+        </div>
+      </div>
+      <div class="page-body" id="clients-body"></div>
+    </section>
+
+    <!-- ── PAGOS ──────────────────────────────────────────── -->
+    <section class="view" id="view-payments">
+      <div class="page-header">
+        <div>
+          <h2>Pagos</h2>
+          <p>Historial de pagos y recibos</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-primary btn-sm" id="btn-new-payment">+ Registrar pago</button>
+        </div>
+      </div>
+      <div class="page-body" id="payments-body"></div>
+    </section>
+
+    <!-- ── PRECIOS ────────────────────────────────────────── -->
+    <section class="view" id="view-prices">
+      <div class="page-header">
+        <div>
+          <h2>Precios</h2>
+          <p>Configuración de tarifas e historial de ajustes</p>
+        </div>
+        <div class="page-actions" id="prices-actions"></div>
+      </div>
+      <div class="page-body" id="prices-body"></div>
+    </section>
+
+    <!-- ── REPORTES ───────────────────────────────────────── -->
+    <section class="view" id="view-reports">
+      <div class="page-header">
+        <div>
+          <h2>Reportes</h2>
+          <p>Estadísticas e ingresos de la cochera</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn btn-secondary btn-sm" onclick="window.print()">🖨️ Imprimir</button>
+        </div>
+      </div>
+      <div class="page-body" id="reports-body"></div>
+    </section>
+
+    <!-- ── CONFIGURACIÓN ──────────────────────────────────── -->
+    <section class="view" id="view-settings">
+      <div class="page-header">
+        <div>
+          <h2>Configuración</h2>
+          <p>Sucursales, usuarios y ajustes del sistema</p>
+        </div>
+      </div>
+      <div class="page-body" id="settings-body"></div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ─── Scripts ────────────────────────────────────────────── -->
+<script src="js/storage.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/modules/dashboard.js"></script>
+<script src="js/modules/map.js"></script>
+<script src="js/modules/scanner.js"></script>
+<script src="js/modules/clients.js"></script>
+<script src="js/modules/payments.js"></script>
+<script src="js/modules/alerts.js"></script>
+<script src="js/modules/prices.js"></script>
+<script src="js/modules/reports.js"></script>
+<script src="js/modules/settings.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
