@@ -4,15 +4,28 @@
 
 const Dashboard = (() => {
 
-  function render() {
-    const session   = Auth.getSession();
-    const branchId  = session.branchId;
-    const branch    = Storage.branches.getById(branchId);
-    const spots     = Storage.spots.getAll(branchId);
-    const contracts = Storage.contracts.getActive(branchId);
-    const payments  = Storage.payments.getAll(branchId);
-    const clients   = Storage.clients.getActive(branchId);
-    const prices    = Storage.prices.getCurrent(branchId);
+  async function render() {
+    const session  = Auth.getSession();
+    const branchId = session.branchId;
+
+    const [branch, spots, contractsAll, payments, clientsAll, prices, settings] = await Promise.all([
+      Storage.branches.getById(branchId),
+      Storage.spots.getAll(branchId),
+      Storage.contracts.getAll(branchId),
+      Storage.payments.getAll(branchId),
+      Storage.clients.getAll(branchId),
+      Storage.prices.getCurrent(branchId),
+      Storage.settings.get(branchId)
+    ]);
+
+    // Maps por id, para resolver referencias sin volver a golpear Storage.
+    const clientsMap   = new Map(clientsAll.map(c => [c.id, c]));
+    const contractsMap = new Map(contractsAll.map(c => [c.id, c]));
+    const spotsMap     = new Map(spots.map(s => [s.id, s]));
+
+    // Subconjuntos "activos" — equivalentes a los antiguos getActive().
+    const contracts = contractsAll.filter(c => c.active);
+    const clients    = clientsAll.filter(c => c.active);
 
     // ─── Stats ────────────────────────────────────────────────────────────────
     const totalSpots   = spots.filter(s => s.status !== 'disabled').length;
@@ -38,7 +51,6 @@ const Dashboard = (() => {
     });
 
     // Price alert
-    const settings    = Storage.settings.get(branchId);
     const lastUpdate  = settings.lastPriceUpdate;
     const daysSincePrice = lastUpdate ? Math.floor((Date.now() - new Date(lastUpdate)) / 86400000) : 999;
     const priceAlert  = daysSincePrice >= 90;
@@ -162,13 +174,14 @@ const Dashboard = (() => {
           <button class="btn btn-ghost btn-sm" onclick="App.navigate('payments')">Ver todos →</button>
         </div>
         <div class="table-wrap">
-          ${recentPaymentsTable(payments, branchId)}
+          ${recentPaymentsTable(payments, clientsMap, contractsMap, spotsMap)}
         </div>
       </div>
     `;
   }
 
-  function recentPaymentsTable(payments, branchId) {
+  // 100% síncrona: recibe los Maps ya cargados por render() y no llama a Storage.
+  function recentPaymentsTable(payments, clientsMap, contractsMap, spotsMap) {
     const recent = [...payments]
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
       .slice(0, 8);
@@ -183,9 +196,9 @@ const Dashboard = (() => {
       </tr></thead>
       <tbody>
         ${recent.map(p => {
-          const client   = Storage.clients.getById(p.clientId);
-          const contract = Storage.contracts.getById(p.contractId);
-          const spot     = contract ? Storage.spots.getById(contract.spotId) : null;
+          const client   = clientsMap.get(p.clientId) || null;
+          const contract = contractsMap.get(p.contractId) || null;
+          const spot     = contract ? (spotsMap.get(contract.spotId) || null) : null;
           return `<tr>
             <td><span class="badge badge-muted">${Utils.formatReceiptNumber(p.receiptNumber)}</span></td>
             <td class="fw-600">${client ? Utils.escapeHtml(`${client.firstName} ${client.lastName}`) : '—'}</td>

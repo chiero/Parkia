@@ -788,6 +788,22 @@ tbody tr { transition: var(--transition); }
   flex-shrink: 0;
 }
 
+/* ─── Offline banner ─────────────────────────────────────── */
+.offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2100;
+  background: var(--warning);
+  color: #1a1a1a;
+  text-align: center;
+  font-size: .82rem;
+  font-weight: 600;
+  padding: .5rem 1rem;
+}
+.offline-banner.hidden { display: none; }
+
 /* ─── Toast ──────────────────────────────────────────────── */
 .toast {
   position: fixed;

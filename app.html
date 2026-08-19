@@ -11,6 +11,8 @@
 
 <a href="#main-content" class="skip-link">Saltar al contenido principal</a>
 
+<div id="offline-banner" class="offline-banner hidden">⚠ Sin conexión — no se pueden registrar cambios hasta reconectar</div>
+
 <!-- Print area (hidden, used for receipt printing) -->
 <div id="print-area"></div>
 
@@ -212,6 +214,8 @@
 </div>
 
 <!-- ─── Scripts ────────────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabaseClient.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/utils.js"></script>
@@ -224,6 +228,7 @@
 <script src="js/modules/prices.js"></script>
 <script src="js/modules/reports.js"></script>
 <script src="js/modules/settings.js"></script>
+<script src="js/modules/realtime.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

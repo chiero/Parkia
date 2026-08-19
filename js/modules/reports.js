@@ -4,13 +4,16 @@
 
 const ReportsModule = (() => {
 
-  function render() {
+  async function render() {
     const session   = Auth.getSession();
     const branchId  = session.branchId;
-    const payments  = Storage.payments.getAll(branchId);
-    const contracts = Storage.contracts.getActive(branchId);
-    const spots     = Storage.spots.getAll(branchId);
-    const clients   = Storage.clients.getActive(branchId);
+
+    const [payments, contracts, spots, clients] = await Promise.all([
+      Storage.payments.getAll(branchId),
+      Storage.contracts.getActive(branchId),
+      Storage.spots.getAll(branchId),
+      Storage.clients.getActive(branchId)
+    ]);
 
     const now   = new Date();
     const month = now.getMonth();
@@ -37,14 +40,29 @@ const ReportsModule = (() => {
     });
 
     // ─── Debtors ──────────────────────────────────────────────────────────
-    const debtors = contracts
-      .filter(c => {
-        const d = Utils.daysDiff(c.endDate);
-        return d !== null && d < 0;
-      })
+    const overdueContracts = contracts.filter(c => {
+      const d = Utils.daysDiff(c.endDate);
+      return d !== null && d < 0;
+    });
+
+    // Precargamos en paralelo (sin duplicados) los clientes y plazas que
+    // necesitan estos contratos vencidos, y armamos Maps por id para que el
+    // .map() de abajo sea 100% síncrono (nada de awaits fila por fila).
+    const debtorClientIds = [...new Set(overdueContracts.map(c => c.clientId))];
+    const debtorSpotIds   = [...new Set(overdueContracts.map(c => c.spotId))];
+
+    const [debtorClients, debtorSpots] = await Promise.all([
+      Promise.all(debtorClientIds.map(id => Storage.clients.getById(id))),
+      Promise.all(debtorSpotIds.map(id => Storage.spots.getById(id)))
+    ]);
+
+    const clientsById = new Map(debtorClients.filter(Boolean).map(c => [c.id, c]));
+    const spotsById   = new Map(debtorSpots.filter(Boolean).map(s => [s.id, s]));
+
+    const debtors = overdueContracts
       .map(c => {
-        const client = Storage.clients.getById(c.clientId);
-        const spot   = Storage.spots.getById(c.spotId);
+        const client = clientsById.get(c.clientId) || null;
+        const spot   = spotsById.get(c.spotId) || null;
         const days   = Math.abs(Utils.daysDiff(c.endDate));
         return { contract: c, client, spot, daysOverdue: days };
       })

@@ -1,218 +1,216 @@
 /**
  * Chiclana Parking — Storage Layer
- * Toda la persistencia de datos via localStorage
+ * Persistencia vía Supabase (Postgres). Misma API pública que la versión
+ * anterior sobre localStorage, pero todos los métodos son ahora async.
  */
-
-const STORAGE_KEYS = {
-  BRANCHES:    'cp_branches',
-  USERS:       'cp_users',
-  SPOTS:       'cp_spots',
-  CLIENTS:     'cp_clients',
-  CONTRACTS:   'cp_contracts',
-  PAYMENTS:    'cp_payments',
-  PRICES:      'cp_prices',
-  SESSION:     'cp_session',
-  SETTINGS:    'cp_settings',
-  ADJUSTMENTS: 'cp_adjustments'
-};
 
 const Storage = (() => {
 
-  // ─── Core helpers ──────────────────────────────────────────────────────────
+  const sb = supabaseClient;
 
-  function generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+  class StorageError extends Error {
+    constructor(message, cause) { super(message); this.name = 'StorageError'; this.cause = cause; }
   }
 
-  function read(key) {
-    try { return JSON.parse(localStorage.getItem(key) || '[]'); }
-    catch { return []; }
+  // ─── camelCase (JS) ↔ snake_case (Postgres) ────────────────────────────────
+
+  const toSnake = s => s.replace(/[A-Z]/g, m => '_' + m.toLowerCase());
+  const toCamel = s => s.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
+
+  function toDb(obj) {
+    if (!obj) return obj;
+    return Object.fromEntries(Object.entries(obj).map(([k, v]) => [toSnake(k), v]));
+  }
+  function fromDb(row) {
+    if (!row) return null;
+    return Object.fromEntries(Object.entries(row).map(([k, v]) => [toCamel(k), v]));
+  }
+  function fromDbList(rows) {
+    return (rows || []).map(fromDb);
   }
 
-  function write(key, data) {
-    try { localStorage.setItem(key, JSON.stringify(data)); }
-    catch (e) { console.error('Storage write error:', e); }
-  }
-
-  function getById(key, id) {
-    return read(key).find(i => i.id === id) || null;
-  }
-
-  function insert(key, item) {
-    const items = read(key);
-    const now = new Date().toISOString();
-    const newItem = { id: generateId(), createdAt: now, updatedAt: now, ...item };
-    items.push(newItem);
-    write(key, items);
-    return newItem;
-  }
-
-  function updateById(key, id, updates) {
-    const items = read(key);
-    const idx = items.findIndex(i => i.id === id);
-    if (idx === -1) return null;
-    items[idx] = { ...items[idx], ...updates, updatedAt: new Date().toISOString() };
-    write(key, items);
-    return items[idx];
-  }
-
-  function deleteById(key, id) {
-    write(key, read(key).filter(i => i.id !== id));
-  }
-
-  // ─── Initialize default data ───────────────────────────────────────────────
-
-  function initialize() {
-    if (read(STORAGE_KEYS.BRANCHES).length > 0) return; // Ya iniciado
-
-    const now = new Date().toISOString();
-    const branchId = generateId();
-
-    // Sucursal por defecto
-    write(STORAGE_KEYS.BRANCHES, [{
-      id: branchId, name: 'Chiclana Parking', address: '', phone: '', email: '',
-      totalFloors: 3, spotsPerFloor: 17, createdAt: now, updatedAt: now
-    }]);
-
-    // Usuario admin por defecto
-    write(STORAGE_KEYS.USERS, [{
-      id: generateId(), branchId: null, username: 'admin', password: 'admin123',
-      role: 'admin', name: 'Administrador', active: true, createdAt: now, updatedAt: now
-    }]);
-
-    // Crear lugares (3 pisos x 17 cada uno)
-    const spots = [];
-    for (let floor = 1; floor <= 3; floor++) {
-      for (let num = 1; num <= 17; num++) {
-        spots.push({
-          id: generateId(), branchId, floor, number: num,
-          label: `P${floor}-${String(num).padStart(2, '0')}`,
-          type: 'fixed',   // 'fixed' | 'mobile'
-          status: 'free',  // 'free' | 'occupied' | 'disabled'
-          clientId: null, contractId: null,
-          createdAt: now, updatedAt: now
-        });
-      }
+  function check(error) {
+    if (error) {
+      console.error('Supabase error:', error);
+      throw new StorageError(error.message || 'Error de base de datos', error);
     }
-    write(STORAGE_KEYS.SPOTS, spots);
-
-    // Precios iniciales
-    write(STORAGE_KEYS.PRICES, [{
-      id: generateId(), branchId,
-      monthlyFixed: 50000, monthlyMobile: 35000, daily: 5000, hourly: 1500,
-      effectiveDate: now.split('T')[0], adjustmentPercent: null,
-      notes: 'Precio inicial de configuración', createdAt: now, updatedAt: now
-    }]);
-
-    // Settings por defecto
-    const settings = {};
-    settings[branchId] = {
-      lastPriceUpdate: now.split('T')[0],
-      receiptFooter: 'Gracias por elegir Chiclana Parking',
-      priceAlertDays: 90,
-      hourlyFractionMinutes: 15,
-      hourlyToleranceMinutes: 5,
-      hourlyMinMinutes: 60
-    };
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
   }
 
-  // ─── Public API ────────────────────────────────────────────────────────────
+  function rpcError(error, translations) {
+    const msg = error?.message || '';
+    for (const [code, text] of Object.entries(translations)) {
+      if (msg.includes(code)) throw new StorageError(text, error);
+    }
+    check(error);
+  }
+
+  // ─── Core helpers (CRUD genérico) ───────────────────────────────────────────
+
+  async function getAll(table, filters = {}) {
+    let q = sb.from(table).select('*');
+    for (const [k, v] of Object.entries(filters)) q = q.eq(toSnake(k), v);
+    const { data, error } = await q;
+    check(error);
+    return fromDbList(data);
+  }
+
+  async function getById(table, id) {
+    if (!id) return null;
+    const { data, error } = await sb.from(table).select('*').eq('id', id).maybeSingle();
+    check(error);
+    return fromDb(data);
+  }
+
+  async function insert(table, item) {
+    const { data, error } = await sb.from(table).insert(toDb(item)).select().single();
+    check(error);
+    return fromDb(data);
+  }
+
+  async function updateById(table, id, updates) {
+    const { data, error } = await sb.from(table)
+      .update(toDb({ ...updates, updatedAt: new Date().toISOString() }))
+      .eq('id', id).select().maybeSingle();
+    check(error);
+    return fromDb(data);
+  }
+
+  async function deleteById(table, id) {
+    const { error } = await sb.from(table).delete().eq('id', id);
+    check(error);
+  }
+
+  // ─── Public API ──────────────────────────────────────────────────────────
 
   return {
-    generateId,
+    generateId: () => crypto.randomUUID(),
 
     branches: {
-      getAll: ()      => read(STORAGE_KEYS.BRANCHES),
-      getById: (id)   => getById(STORAGE_KEYS.BRANCHES, id),
-      add: (b)        => insert(STORAGE_KEYS.BRANCHES, b),
-      update: (id, u) => updateById(STORAGE_KEYS.BRANCHES, id, u)
+      getAll:  ()      => getAll('branches'),
+      getById: (id)    => getById('branches', id),
+      add:     (b)     => insert('branches', b),
+      update:  (id, u) => updateById('branches', id, u)
     },
 
     users: {
-      getAll: ()            => read(STORAGE_KEYS.USERS),
-      getById: (id)         => getById(STORAGE_KEYS.USERS, id),
-      getByUsername: (name) => read(STORAGE_KEYS.USERS).find(u => u.username === name) || null,
-      add: (u)              => insert(STORAGE_KEYS.USERS, u),
-      update: (id, u)       => updateById(STORAGE_KEYS.USERS, id, u),
-      remove: (id)          => deleteById(STORAGE_KEYS.USERS, id)
+      // Compatibilidad de nombre: la tabla real es "profiles" (users vive en Supabase Auth).
+      getAll:         ()             => getAll('profiles'),
+      getById:        (id)           => getById('profiles', id),
+      getByUsername:  async (name)   => (await getAll('profiles', { username: name }))[0] || null,
+      update:         (id, u)        => updateById('profiles', id, u)
+      // add()/remove() no se exponen: la creación/baja de usuarios se hace en
+      // Supabase Studio (requiere la service role key, ver plan de migración).
     },
 
     spots: {
-      getAll: (bid)         => read(STORAGE_KEYS.SPOTS).filter(s => s.branchId === bid),
-      getByFloor: (bid, fl) => read(STORAGE_KEYS.SPOTS).filter(s => s.branchId === bid && s.floor === fl),
-      getById: (id)         => getById(STORAGE_KEYS.SPOTS, id),
-      update: (id, u)       => updateById(STORAGE_KEYS.SPOTS, id, u)
-    },
+      getAll:     (bid)     => getAll('spots', { branchId: bid }),
+      getByFloor: (bid, fl) => getAll('spots', { branchId: bid, floor: fl }),
+      getById:    (id)      => getById('spots', id),
+      add:        (s)       => insert('spots', s),
+      update:     (id, u)   => updateById('spots', id, u),
 
-    clients: {
-      getAll: (bid)    => read(STORAGE_KEYS.CLIENTS).filter(c => c.branchId === bid),
-      getActive: (bid) => read(STORAGE_KEYS.CLIENTS).filter(c => c.branchId === bid && c.active !== false),
-      getById: (id)    => getById(STORAGE_KEYS.CLIENTS, id),
-      add: (c)         => insert(STORAGE_KEYS.CLIENTS, c),
-      update: (id, u)  => updateById(STORAGE_KEYS.CLIENTS, id, u)
-    },
-
-    contracts: {
-      getAll: (bid)       => read(STORAGE_KEYS.CONTRACTS).filter(c => c.branchId === bid),
-      getActive: (bid)    => read(STORAGE_KEYS.CONTRACTS).filter(c => c.branchId === bid && c.active),
-      getById: (id)       => getById(STORAGE_KEYS.CONTRACTS, id),
-      getBySpot: (sid)    => read(STORAGE_KEYS.CONTRACTS).find(c => c.spotId === sid && c.active) || null,
-      getByClient: (cid)  => read(STORAGE_KEYS.CONTRACTS).filter(c => c.clientId === cid),
-      add: (c)            => insert(STORAGE_KEYS.CONTRACTS, c),
-      update: (id, u)     => updateById(STORAGE_KEYS.CONTRACTS, id, u)
-    },
-
-    payments: {
-      getAll: (bid)          => read(STORAGE_KEYS.PAYMENTS).filter(p => p.branchId === bid),
-      getByClient: (cid)     => read(STORAGE_KEYS.PAYMENTS).filter(p => p.clientId === cid),
-      getByContract: (ctid)  => read(STORAGE_KEYS.PAYMENTS).filter(p => p.contractId === ctid),
-      getNextReceiptNumber: (bid) => {
-        const n = read(STORAGE_KEYS.PAYMENTS).filter(p => p.branchId === bid).length + 1;
-        return String(n).padStart(6, '0');
+      // Reemplaza el viejo patrón "leer → chequear status → update" (race condition
+      // real con varios celulares) por una función atómica en el servidor.
+      assign: async (spotId, { clientId, rentalType, period, startDate, endDate, price, plate }) => {
+        const { data, error } = await sb.rpc('assign_spot', {
+          p_spot_id: spotId, p_client_id: clientId, p_rental_type: rentalType, p_period: period,
+          p_start_date: startDate || null, p_end_date: endDate || null,
+          p_price: price, p_plate: plate || null
+        });
+        if (error) {
+          rpcError(error, { SPOT_ALREADY_TAKEN: 'Ese lugar ya fue asignado por otro usuario. Actualizá la pantalla.' });
+        }
+        return fromDb(data);
       },
-      add: (p) => insert(STORAGE_KEYS.PAYMENTS, p)
-    },
 
-    prices: {
-      getAll: (bid)    => read(STORAGE_KEYS.PRICES).filter(p => p.branchId === bid),
-      getCurrent: (bid) => {
-        const list = read(STORAGE_KEYS.PRICES)
-          .filter(p => p.branchId === bid)
-          .sort((a, b) => new Date(b.effectiveDate) - new Date(a.effectiveDate));
-        return list[0] || null;
-      },
-      add: (p) => insert(STORAGE_KEYS.PRICES, p)
-    },
-
-    session: {
-      get:   ()  => { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.SESSION)); } catch { return null; } },
-      set:   (s) => localStorage.setItem(STORAGE_KEYS.SESSION, JSON.stringify(s)),
-      clear: ()  => localStorage.removeItem(STORAGE_KEYS.SESSION)
-    },
-
-    settings: {
-      get: (bid) => {
-        try {
-          const all = JSON.parse(localStorage.getItem(STORAGE_KEYS.SETTINGS) || '{}');
-          return all[bid] || {};
-        } catch { return {}; }
-      },
-      update: (bid, updates) => {
-        try {
-          const all = JSON.parse(localStorage.getItem(STORAGE_KEYS.SETTINGS) || '{}');
-          all[bid] = { ...(all[bid] || {}), ...updates };
-          localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(all));
-        } catch {}
+      release: async (spotId) => {
+        const { error } = await sb.rpc('release_spot', { p_spot_id: spotId });
+        if (error) {
+          rpcError(error, { SPOT_ALREADY_FREE: 'Ese lugar ya estaba libre. Actualizá la pantalla.' });
+        }
       }
     },
 
-    adjustments: {
-      getAll: (bid)      => read(STORAGE_KEYS.ADJUSTMENTS).filter(a => a.branchId === bid),
-      getByClient: (cid) => read(STORAGE_KEYS.ADJUSTMENTS).filter(a => a.clientId === cid),
-      add: (a)           => insert(STORAGE_KEYS.ADJUSTMENTS, a)
+    clients: {
+      getAll:    (bid) => getAll('clients', { branchId: bid }),
+      getActive: (bid) => getAll('clients', { branchId: bid, active: true }),
+      getById:   (id)  => getById('clients', id),
+      add:       (c)   => insert('clients', c),
+      update:    (id, u) => updateById('clients', id, u)
     },
 
-    initialize
+    contracts: {
+      getAll:      (bid)  => getAll('contracts', { branchId: bid }),
+      getActive:   (bid)  => getAll('contracts', { branchId: bid, active: true }),
+      getById:     (id)   => getById('contracts', id),
+      getBySpot:   async (sid) => (await getAll('contracts', { spotId: sid, active: true }))[0] || null,
+      getByClient: (cid)  => getAll('contracts', { clientId: cid }),
+      add:         (c)    => insert('contracts', c),
+      update:      (id, u) => updateById('contracts', id, u)
+    },
+
+    payments: {
+      getAll:        (bid)  => getAll('payments', { branchId: bid }),
+      getByClient:   (cid)  => getAll('payments', { clientId: cid }),
+      getByContract: (ctid) => getAll('payments', { contractId: ctid }),
+
+      // La numeración de recibo ya no se calcula en el cliente (getNextReceiptNumber
+      // tenía la misma race condition que la asignación de plaza): el servidor la
+      // genera atómicamente dentro de add()/checkoutHourly().
+      add: async (p) => {
+        const { data, error } = await sb.rpc('register_payment', {
+          p_branch_id: p.branchId, p_client_id: p.clientId, p_contract_id: p.contractId || null,
+          p_amount: p.amount, p_date: p.date || null, p_method: p.method || 'cash',
+          p_period_start: p.periodStart || null, p_period_end: p.periodEnd || null,
+          p_notes: p.notes || null
+        });
+        check(error);
+        return fromDb(data);
+      },
+
+      checkoutHourly: async (contractId, exitTimeIso, amount, method, notes) => {
+        const { data, error } = await sb.rpc('checkout_hourly', {
+          p_contract_id: contractId, p_exit_time: exitTimeIso,
+          p_amount: amount, p_method: method || 'cash', p_notes: notes || null
+        });
+        check(error);
+        return fromDb(data);
+      }
+    },
+
+    prices: {
+      getAll: (bid) => getAll('prices', { branchId: bid }),
+      getCurrent: async (bid) => {
+        const list = (await getAll('prices', { branchId: bid }))
+          .sort((a, b) => new Date(b.effectiveDate) - new Date(a.effectiveDate));
+        return list[0] || null;
+      },
+      add: (p) => insert('prices', p)
+    },
+
+    adjustments: {
+      getAll:      (bid) => getAll('adjustments', { branchId: bid }),
+      getByClient: (cid) => getAll('adjustments', { clientId: cid }),
+      add:         (a)   => insert('adjustments', a)
+    },
+
+    settings: {
+      get: async (bid) => {
+        const { data, error } = await sb.from('settings').select('*').eq('branch_id', bid).maybeSingle();
+        check(error);
+        return fromDb(data) || {};
+      },
+      update: async (bid, updates) => {
+        const { data, error } = await sb.from('settings')
+          .upsert(toDb({ ...updates, branchId: bid, updatedAt: new Date().toISOString() }), { onConflict: 'branch_id' })
+          .select().maybeSingle();
+        check(error);
+        return fromDb(data);
+      }
+    },
+
+    // El seed inicial (sucursal, plazas, precios, settings) se corre una sola vez
+    // en Supabase (supabase/seed.sql), no en el cliente.
+    initialize: async () => {}
   };
 })();

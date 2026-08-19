@@ -163,17 +163,18 @@ const ScannerModule = (() => {
 
   // ─── Búsqueda y resultado ────────────────────────────────────────────────
 
-  function doSearch() {
+  async function doSearch() {
     const raw   = document.getElementById('scanner-plate-input')?.value || '';
     const plate = normalizePlate(raw);
     if (!plate) { Utils.showToast('Ingresá o escaneá una patente', 'error'); return; }
 
     const session = Auth.getSession();
-    const client  = Storage.clients.getAll(session.branchId).find(c => normalizePlate(c.plate) === plate);
+    const clients = await Storage.clients.getAll(session.branchId);
+    const client  = clients.find(c => normalizePlate(c.plate) === plate);
 
     const resultEl = document.getElementById('scanner-result');
-    resultEl.innerHTML = client ? buildFoundResult(client) : buildNotFoundResult(plate);
-    bindResultActions(client, plate);
+    resultEl.innerHTML = client ? await buildFoundResult(client) : buildNotFoundResult(plate);
+    await bindResultActions(client, plate);
   }
 
   function buildNotFoundResult(plate) {
@@ -191,18 +192,24 @@ const ScannerModule = (() => {
       </div>`;
   }
 
-  function getRelevantContract(clientId) {
-    const contracts = Storage.contracts.getByClient(clientId).filter(c => c.active);
+  async function getRelevantContract(clientId) {
+    const all       = await Storage.contracts.getByClient(clientId);
+    const contracts = all.filter(c => c.active);
     return contracts.find(c => c.rentalType === 'hourly') || contracts[0] || null;
   }
 
-  function buildFoundResult(client) {
+  async function buildFoundResult(client) {
     const session  = Auth.getSession();
-    const contract = getRelevantContract(client.id);
+    const contract = await getRelevantContract(client.id);
     const name     = `${Utils.escapeHtml(client.firstName)} ${Utils.escapeHtml(client.lastName)}`;
 
+    const [spot, settings, prices] = await Promise.all([
+      contract ? Storage.spots.getById(contract.spotId) : Promise.resolve(null),
+      Storage.settings.get(session.branchId),
+      Storage.prices.getCurrent(session.branchId)
+    ]);
+
     let statusBlock;
-    let spot = null;
 
     if (!contract) {
       statusBlock = `
@@ -214,11 +221,8 @@ const ScannerModule = (() => {
           </div>
         </div>`;
     } else if (contract.rentalType === 'hourly') {
-      spot = Storage.spots.getById(contract.spotId);
-      const entry    = new Date(contract.entryTime || contract.startDate || contract.createdAt);
-      const settings = Storage.settings.get(session.branchId);
-      const prices   = Storage.prices.getCurrent(session.branchId);
-      const fee      = Utils.calculateHourlyFee(entry, new Date(), contract.hourlyRate || prices?.hourly || 1500, settings);
+      const entry = new Date(contract.entryTime || contract.startDate || contract.createdAt);
+      const fee   = Utils.calculateHourlyFee(entry, new Date(), contract.hourlyRate || prices?.hourly || 1500, settings);
       statusBlock = `
         <div class="alert-item alert-info">
           <span class="alert-icon">⏱️</span>
@@ -228,7 +232,6 @@ const ScannerModule = (() => {
           </div>
         </div>`;
     } else {
-      spot = Storage.spots.getById(contract.spotId);
       const status = Utils.contractStatus(contract);
       const days   = Utils.daysDiff(contract.endDate);
       const isBad  = status === 'expired';
@@ -272,7 +275,7 @@ const ScannerModule = (() => {
       </div>`;
   }
 
-  function bindResultActions(client, plate) {
+  async function bindResultActions(client, plate) {
     const btnNewClient = document.getElementById('btn-scan-new-client');
     if (btnNewClient) btnNewClient.addEventListener('click', () => ClientsModule.showNewClientModal(plate));
 
@@ -286,8 +289,8 @@ const ScannerModule = (() => {
 
     const btnSpot = document.getElementById('btn-scan-view-spot');
     if (btnSpot) {
-      const contract = getRelevantContract(client.id);
-      const spot = contract ? Storage.spots.getById(contract.spotId) : null;
+      const contract = await getRelevantContract(client.id);
+      const spot = contract ? await Storage.spots.getById(contract.spotId) : null;
       if (spot) btnSpot.addEventListener('click', () => MapModule.showSpotModal(spot.id));
     }
   }

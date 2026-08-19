@@ -7,10 +7,10 @@ const MapModule = (() => {
 
   let currentFloor = 1;
 
-  function render() {
+  async function render() {
     const session  = Auth.getSession();
     const branchId = session.branchId;
-    const branch   = Storage.branches.getById(branchId);
+    const branch   = await Storage.branches.getById(branchId);
     const floors   = branch ? branch.totalFloors : 3;
 
     document.getElementById('map-body').innerHTML = `
@@ -50,13 +50,19 @@ const MapModule = (() => {
       });
     });
 
-    renderFloor(branchId, currentFloor);
+    await renderFloor(branchId, currentFloor);
   }
 
-  function renderFloor(branchId, floor) {
-    const spots     = Storage.spots.getByFloor(branchId, floor);
-    const contracts = Storage.contracts.getActive(branchId);
-    const now = new Date();
+  async function renderFloor(branchId, floor) {
+    const [spots, contracts, clients, prices, settings] = await Promise.all([
+      Storage.spots.getByFloor(branchId, floor),
+      Storage.contracts.getActive(branchId),
+      Storage.clients.getAll(branchId),
+      Storage.prices.getCurrent(branchId),
+      Storage.settings.get(branchId)
+    ]);
+
+    const clientsById = new Map(clients.map(c => [c.id, c]));
 
     // Build lookup map
     const contractBySpot = {};
@@ -72,7 +78,9 @@ const MapModule = (() => {
     const container = document.getElementById('floor-grid-container');
     container.innerHTML = `<div class="floor-grid">${
       spots.sort((a, b) => a.number - b.number).map(spot => {
-        return buildSpotCard(spot, contractBySpot[spot.id]);
+        const contract = contractBySpot[spot.id];
+        const client   = contract ? clientsById.get(contract.clientId) : null;
+        return buildSpotCard(spot, contract, client, prices, settings);
       }).join('')
     }</div>`;
 
@@ -88,7 +96,7 @@ const MapModule = (() => {
     });
   }
 
-  function buildSpotCard(spot, contract) {
+  function buildSpotCard(spot, contract, client, prices, settings) {
     let cardClass = 'free';
     let clientName = '';
     let plate = '';
@@ -103,7 +111,6 @@ const MapModule = (() => {
         cardClass = 'occupied-mobile';
         typeBadge = `<span class="spot-type-badge" style="background:#0284c7;color:#fff">POR HORA</span>`;
 
-        const client = Storage.clients.getById(contract.clientId);
         if (client) {
           clientName = Utils.truncate(`${client.firstName} ${client.lastName}`, 16);
           plate = client.plate || contract.plate || '';
@@ -113,8 +120,6 @@ const MapModule = (() => {
         }
 
         const entry = new Date(contract.entryTime || contract.startDate || contract.createdAt);
-        const settings = Storage.settings.get(spot.branchId);
-        const prices = Storage.prices.getCurrent(spot.branchId);
         const fee = Utils.calculateHourlyFee(entry, new Date(), contract.hourlyRate || prices?.hourly || 1500, settings);
 
         daysInfo = `<span class="spot-days" style="color:#0284c7;font-weight:700">⏱️ ${fee.formattedDuration} · ${Utils.formatCurrency(fee.totalAmount)}</span>`;
@@ -130,7 +135,6 @@ const MapModule = (() => {
           cardClass = 'occupied-mobile';
         }
 
-        const client = Storage.clients.getById(contract.clientId);
         if (client) {
           clientName = Utils.truncate(`${client.firstName} ${client.lastName}`, 16);
           plate = client.plate || '';
@@ -173,19 +177,21 @@ const MapModule = (() => {
 
   // ─── Spot modal ────────────────────────────────────────────────────────────
 
-  function showSpotModal(spotId) {
-    const spot     = Storage.spots.getById(spotId);
+  async function showSpotModal(spotId) {
+    const spot = await Storage.spots.getById(spotId);
     if (!spot) return;
 
-    const contract = Storage.contracts.getBySpot(spotId);
-    const client   = contract ? Storage.clients.getById(contract.clientId) : null;
-    const prices   = Storage.prices.getCurrent(spot.branchId);
-    const canEdit  = Auth.isManagerOrAbove();
+    const [contract, prices] = await Promise.all([
+      Storage.contracts.getBySpot(spotId),
+      Storage.prices.getCurrent(spot.branchId)
+    ]);
+    const client  = contract ? await Storage.clients.getById(contract.clientId) : null;
+    const canEdit = Auth.isManagerOrAbove();
 
     if (spot.status === 'free') {
       showFreeSpotModal(spot, prices, canEdit);
     } else {
-      showOccupiedSpotModal(spot, contract, client, canEdit);
+      await showOccupiedSpotModal(spot, contract, client, canEdit);
     }
   }
 
@@ -226,10 +232,12 @@ const MapModule = (() => {
     );
   }
 
-  function showHourlyEntryModal(spot) {
-    const session  = Auth.getSession();
-    const prices   = Storage.prices.getCurrent(session.branchId);
-    const clients  = Storage.clients.getActive(session.branchId);
+  async function showHourlyEntryModal(spot) {
+    const session = Auth.getSession();
+    const [prices, clients] = await Promise.all([
+      Storage.prices.getCurrent(session.branchId),
+      Storage.clients.getActive(session.branchId)
+    ]);
     const nowLocal = new Date(Date.now() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
 
     const clientOptions = clients.map(c =>
@@ -274,7 +282,7 @@ const MapModule = (() => {
     ]);
   }
 
-  function confirmHourlyEntry(spot) {
+  async function confirmHourlyEntry(spot) {
     const plate    = document.getElementById('he-plate')?.value.trim().toUpperCase();
     const clientId = document.getElementById('he-client')?.value || null;
     const entryVal = document.getElementById('he-entry')?.value;
@@ -287,11 +295,12 @@ const MapModule = (() => {
     let finalClientId = clientId;
 
     if (!finalClientId) {
-      const existingClient = Storage.clients.getAll(session.branchId).find(c => c.plate && c.plate.toUpperCase() === plate);
+      const clients = await Storage.clients.getAll(session.branchId);
+      const existingClient = clients.find(c => c.plate && c.plate.toUpperCase() === plate);
       if (existingClient) {
         finalClientId = existingClient.id;
       } else {
-        const newC = Storage.clients.add({
+        const newC = await Storage.clients.add({
           branchId: session.branchId,
           firstName: 'Ocasional',
           lastName: plate || 'Hora',
@@ -307,36 +316,42 @@ const MapModule = (() => {
 
     const entryIso = new Date(entryVal).toISOString();
 
-    const contract = Storage.contracts.add({
-      branchId:   session.branchId,
-      clientId:   finalClientId,
-      spotId:     spot.id,
-      plate:      plate,
-      rentalType: 'hourly',
-      period:     'hourly',
-      startDate:  entryIso,
-      entryTime:  entryIso,
-      endDate:    entryIso.split('T')[0],
-      hourlyRate: rate,
-      price:      rate,
-      active:     true
-    });
-
-    Storage.spots.update(spot.id, { status: 'occupied', clientId: finalClientId, contractId: contract.id });
+    let contract;
+    try {
+      contract = await Storage.spots.assign(spot.id, {
+        clientId:   finalClientId,
+        rentalType: 'hourly',
+        period:     'hourly',
+        startDate:  entryIso,
+        endDate:    entryIso.split('T')[0],
+        price:      rate,
+        plate
+      });
+      contract = await Storage.contracts.update(contract.id, { entryTime: entryIso, hourlyRate: rate });
+    } catch (err) {
+      Utils.showToast(err.message || 'No se pudo registrar el ingreso', 'error');
+      return;
+    }
 
     Utils.closeModal();
     Utils.showToast('Ingreso por hora registrado ✓', 'success');
-    render();
-    App.refreshBadges();
+    await render();
+    await App.refreshBadges();
   }
 
-  function showOccupiedSpotModal(spot, contract, client, canEdit) {
+  async function showOccupiedSpotModal(spot, contract, client, canEdit) {
     if (!contract) return;
     if (contract.rentalType === 'hourly') {
-      showHourlyOccupiedSpotModal(spot, contract, client, canEdit);
+      const [prices, settings] = await Promise.all([
+        Storage.prices.getCurrent(spot.branchId),
+        Storage.settings.get(spot.branchId)
+      ]);
+      showHourlyOccupiedSpotModal(spot, contract, client, canEdit, prices, settings);
       return;
     }
     if (!client) return;
+
+    const branch = await Storage.branches.getById(Auth.getSession().branchId);
 
     const days   = Utils.daysDiff(contract.endDate);
     const status = Utils.contractStatus(contract);
@@ -398,7 +413,7 @@ const MapModule = (() => {
         </div>
 
         ${client.phone ? `
-        <a href="${Utils.whatsappUrl(client.phone, buildReminderMessage(client, contract, spot))}"
+        <a href="${Utils.whatsappUrl(client.phone, buildReminderMessage(client, contract, spot, branch))}"
            target="_blank" rel="noopener"
            class="btn btn-success w-full" style="justify-content:center">
           📲 Enviar recordatorio por WhatsApp
@@ -409,10 +424,8 @@ const MapModule = (() => {
     );
   }
 
-  function showHourlyOccupiedSpotModal(spot, contract, client, canEdit) {
+  function showHourlyOccupiedSpotModal(spot, contract, client, canEdit, prices, settings) {
     const entryTime  = new Date(contract.entryTime || contract.startDate || contract.createdAt);
-    const prices     = Storage.prices.getCurrent(spot.branchId);
-    const settings   = Storage.settings.get(spot.branchId);
     const hourlyRate = contract.hourlyRate || prices?.hourly || 1500;
     const fee        = Utils.calculateHourlyFee(entryTime, new Date(), hourlyRate, settings);
 
@@ -473,15 +486,17 @@ const MapModule = (() => {
     );
   }
 
-  function checkoutHourlyModal(spot, contract) {
+  async function checkoutHourlyModal(spot, contract) {
     const session   = Auth.getSession();
     const branchId  = session.branchId;
-    const settings  = Storage.settings.get(branchId);
-    const prices    = Storage.prices.getCurrent(branchId);
+    const [settings, prices, client] = await Promise.all([
+      Storage.settings.get(branchId),
+      Storage.prices.getCurrent(branchId),
+      Storage.clients.getById(contract.clientId)
+    ]);
     const entryTime = new Date(contract.entryTime || contract.startDate || contract.createdAt);
     const nowLocal  = new Date(Date.now() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     const hourlyRate = contract.hourlyRate || prices?.hourly || 1500;
-    const client    = Storage.clients.getById(contract.clientId);
     const plateText = (client ? client.plate : '') || contract.plate || '—';
 
     const initialFee = Utils.calculateHourlyFee(entryTime, new Date(), hourlyRate, settings);
@@ -537,13 +552,13 @@ const MapModule = (() => {
     ], 'modal-lg');
   }
 
-  function _recalcCheckoutFee(contractId, hourlyRate) {
+  async function _recalcCheckoutFee(contractId, hourlyRate) {
     const entryVal = document.getElementById('co-entry')?.value;
     const exitVal  = document.getElementById('co-exit')?.value;
     if (!entryVal || !exitVal) return;
 
     const session  = Auth.getSession();
-    const settings = Storage.settings.get(session.branchId);
+    const settings = await Storage.settings.get(session.branchId);
     const fee      = Utils.calculateHourlyFee(new Date(entryVal), new Date(exitVal), hourlyRate, settings);
 
     const durEl   = document.getElementById('co-dur');
@@ -555,7 +570,7 @@ const MapModule = (() => {
     if (totalEl) totalEl.textContent = Utils.formatCurrency(fee.totalAmount);
   }
 
-  function confirmCheckoutHourly(spot, contract, hourlyRate) {
+  async function confirmCheckoutHourly(spot, contract, hourlyRate) {
     const entryVal = document.getElementById('co-entry')?.value;
     const exitVal  = document.getElementById('co-exit')?.value;
     const method   = document.getElementById('co-method')?.value || 'cash';
@@ -563,38 +578,24 @@ const MapModule = (() => {
     if (!entryVal || !exitVal) { Utils.showToast('Ingresá las horas de ingreso y salida', 'error'); return; }
 
     const session   = Auth.getSession();
-    const settings  = Storage.settings.get(session.branchId);
+    const settings  = await Storage.settings.get(session.branchId);
     const entryDate = new Date(entryVal);
     const exitDate  = new Date(exitVal);
     const fee       = Utils.calculateHourlyFee(entryDate, exitDate, hourlyRate, settings);
+    const notes     = `Estadía por hora (${fee.formattedDuration}) — ${Utils.formatCurrency(fee.hourlyRate)}/hr`;
 
-    const receiptNum = Storage.payments.getNextReceiptNumber(session.branchId);
-
-    const payment = Storage.payments.add({
-      branchId:     session.branchId,
-      clientId:     contract.clientId,
-      contractId:   contract.id,
-      amount:       fee.totalAmount,
-      date:         exitVal.split('T')[0],
-      method:       method,
-      receiptNumber: receiptNum,
-      periodStart:  entryVal.split('T')[0],
-      periodEnd:    exitVal.split('T')[0],
-      notes:        `Estadía por hora (${fee.formattedDuration}) — ${Utils.formatCurrency(fee.hourlyRate)}/hr`
-    });
-
-    Storage.contracts.update(contract.id, {
-      active: false,
-      exitTime: exitDate.toISOString(),
-      price: fee.totalAmount
-    });
-
-    Storage.spots.update(spot.id, { status: 'free', clientId: null, contractId: null });
+    let payment;
+    try {
+      payment = await Storage.payments.checkoutHourly(contract.id, exitDate.toISOString(), fee.totalAmount, method, notes);
+    } catch (err) {
+      Utils.showToast(err.message || 'No se pudo registrar el cobro', 'error');
+      return;
+    }
 
     Utils.closeModal();
     Utils.showToast(`Salida registrada · Cobrado ${Utils.formatCurrency(fee.totalAmount)} ✓`, 'success');
-    render();
-    App.refreshBadges();
+    await render();
+    await App.refreshBadges();
 
     setTimeout(() => {
       if (PaymentsModule.printReceipt) {
@@ -612,17 +613,17 @@ const MapModule = (() => {
     }, 200);
   }
 
-  function buildReminderMessage(client, contract, spot) {
-    const session = Auth.getSession();
-    const branch  = Storage.branches.getById(session.branchId);
+  function buildReminderMessage(client, contract, spot, branch) {
     return `Hola ${client.firstName}! 👋\n\nTe recordamos que tu lugar *${spot.label}* en ${branch ? branch.name : 'la cochera'} vence el *${Utils.formatDate(contract.endDate)}*.\nMonto: *${Utils.formatCurrency(contract.price)}*\n\nGracias por elegirnos! 🚗`;
   }
 
-  function showAssignModal(spot) {
+  async function showAssignModal(spot) {
     const branchId = spot.branchId;
-    const clients  = Storage.clients.getActive(branchId);
-    const prices   = Storage.prices.getCurrent(branchId);
-    const today    = new Date().toISOString().split('T')[0];
+    const [clients, prices] = await Promise.all([
+      Storage.clients.getActive(branchId),
+      Storage.prices.getCurrent(branchId)
+    ]);
+    const today = new Date().toISOString().split('T')[0];
 
     const clientOptions = clients.map(c =>
       `<option value="${c.id}">${Utils.escapeHtml(c.firstName + ' ' + c.lastName)} — ${Utils.escapeHtml(c.plate || 'sin patente')}</option>`
@@ -686,13 +687,13 @@ const MapModule = (() => {
       'modal-lg'
     );
 
-    _updatePrice();
+    await _updatePrice();
     _updateEndDate();
   }
 
-  function _updatePrice() {
+  async function _updatePrice() {
     const type   = document.getElementById('assign-type')?.value;
-    const prices = Storage.prices.getCurrent(Auth.getSession().branchId);
+    const prices = await Storage.prices.getCurrent(Auth.getSession().branchId);
     if (!prices || !type) return;
     const suggested = type === 'fixed' ? prices.monthlyFixed :
                       type === 'mobile' ? prices.monthlyMobile :
@@ -723,7 +724,7 @@ const MapModule = (() => {
     }
   }
 
-  function confirmAssign(spot) {
+  async function confirmAssign(spot) {
     const clientId = document.getElementById('assign-client')?.value;
     const type     = document.getElementById('assign-type')?.value;
     const period   = document.getElementById('assign-period')?.value;
@@ -736,38 +737,35 @@ const MapModule = (() => {
     if (!end)      { Utils.showToast('Ingresá la fecha de fin', 'error'); return; }
     if (!price || price <= 0) { Utils.showToast('Ingresá un precio válido', 'error'); return; }
 
-    const session  = Auth.getSession();
-    const contract = Storage.contracts.add({
-      branchId:   session.branchId,
-      clientId,
-      spotId:     spot.id,
-      rentalType: type,
-      period,
-      startDate:  start,
-      endDate:    end,
-      price,
-      active:     true
-    });
-
-    // Update spot
-    Storage.spots.update(spot.id, { status: 'occupied', clientId, contractId: contract.id });
+    try {
+      // Reemplaza el viejo "leer estado → chequear → escribir" (race condition
+      // real con varios celulares) por la asignación atómica en el servidor.
+      await Storage.spots.assign(spot.id, { clientId, rentalType: type, period, startDate: start, endDate: end, price });
+    } catch (err) {
+      Utils.showToast(err.message || 'No se pudo asignar el lugar', 'error');
+      return;
+    }
 
     Utils.closeModal();
     Utils.showToast('Lugar asignado correctamente ✓', 'success');
-    render();
-    App.refreshBadges();
+    await render();
+    await App.refreshBadges();
   }
 
   function releaseSpot(spot, contract) {
     Utils.confirm(
       `¿Liberar el lugar <strong>${spot.label}</strong>? Se cerrará el contrato activo.`,
-      () => {
-        Storage.contracts.update(contract.id, { active: false });
-        Storage.spots.update(spot.id, { status: 'free', clientId: null, contractId: null });
+      async () => {
+        try {
+          await Storage.spots.release(spot.id);
+        } catch (err) {
+          Utils.showToast(err.message || 'No se pudo liberar el lugar', 'error');
+          return;
+        }
         Utils.closeModal();
         Utils.showToast('Lugar liberado correctamente', 'success');
-        render();
-        App.refreshBadges();
+        await render();
+        await App.refreshBadges();
       }
     );
   }

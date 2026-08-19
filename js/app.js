@@ -8,17 +8,19 @@ const App = (() => {
 
   // ─── Init ──────────────────────────────────────────────────────────────────
 
-  function init() {
-    session = Auth.requireAuth();
+  async function init() {
+    session = await Auth.requireAuth();
     if (!session) return;
 
-    Storage.initialize();
-    setupUI();
+    await setupUI();
     setupNavigation();
     setupMobileMenu();
-    setupBranchSelector();
-    navigate('dashboard');
-    refreshBadges();
+    setupOfflineBanner();
+    await setupBranchSelector();
+    await navigate('dashboard');
+    await refreshBadges();
+
+    if (typeof RealtimeModule !== 'undefined') RealtimeModule.subscribe(session.branchId);
 
     // Refresh badges every 5 minutes
     setInterval(refreshBadges, 5 * 60 * 1000);
@@ -26,9 +28,9 @@ const App = (() => {
 
   // ─── UI ────────────────────────────────────────────────────────────────────
 
-  function setupUI() {
+  async function setupUI() {
     // User info in sidebar
-    const branch = Storage.branches.getById(session.branchId);
+    const branch = await Storage.branches.getById(session.branchId);
     document.getElementById('branch-name').textContent = branch ? branch.name : 'Cochera';
     document.getElementById('mobile-branch-name').textContent = branch ? branch.name : 'Cochera';
     document.getElementById('user-name').textContent   = session.name;
@@ -91,7 +93,7 @@ const App = (() => {
     document.getElementById('btn-new-payment').addEventListener('click', () => PaymentsModule.showNewPaymentModal());
   }
 
-  function navigate(viewId) {
+  async function navigate(viewId) {
     // Tear down the previously active view (e.g. stop the camera stream)
     const prevItem = document.querySelector('.nav-item.active');
     const prevView = prevItem ? prevItem.dataset.view : null;
@@ -114,7 +116,18 @@ const App = (() => {
     }
 
     // Run view init
-    if (VIEW_INIT[viewId]) VIEW_INIT[viewId]();
+    if (VIEW_INIT[viewId]) await VIEW_INIT[viewId]();
+  }
+
+  // ─── Sin conexión ──────────────────────────────────────────────────────────
+
+  function setupOfflineBanner() {
+    const banner = document.getElementById('offline-banner');
+    if (!banner) return;
+    const update = () => banner.classList.toggle('hidden', navigator.onLine);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    update();
   }
 
   // ─── Mobile menu ───────────────────────────────────────────────────────────
@@ -144,9 +157,9 @@ const App = (() => {
 
   // ─── Branch selector (admin) ────────────────────────────────────────────────
 
-  function setupBranchSelector() {
+  async function setupBranchSelector() {
     if (!Auth.isAdmin()) return;
-    const branches = Storage.branches.getAll();
+    const branches = await Storage.branches.getAll();
     if (branches.length <= 1) return;
 
     const wrap = document.getElementById('branch-selector-wrap');
@@ -161,23 +174,24 @@ const App = (() => {
       sel.appendChild(opt);
     });
 
-    sel.addEventListener('change', () => {
+    sel.addEventListener('change', async () => {
       Auth.setBranch(sel.value);
       session = Auth.getSession();
-      const branch = Storage.branches.getById(session.branchId);
+      const branch = await Storage.branches.getById(session.branchId);
       document.getElementById('branch-name').textContent = branch ? branch.name : 'Cochera';
+      if (typeof RealtimeModule !== 'undefined') RealtimeModule.subscribe(session.branchId);
       // Re-render current view
       const activeView = document.querySelector('.nav-item.active');
-      if (activeView) navigate(activeView.dataset.view);
+      if (activeView) await navigate(activeView.dataset.view);
     });
   }
 
   // ─── Badges ────────────────────────────────────────────────────────────────
 
-  function refreshBadges() {
+  async function refreshBadges() {
     const s = Auth.getSession();
     if (!s) return;
-    const contracts = Storage.contracts.getActive(s.branchId);
+    const contracts = await Storage.contracts.getActive(s.branchId);
     const today = new Date();
 
     let alertCount = 0;
@@ -199,6 +213,16 @@ const App = (() => {
 
   return { init, navigate, refreshBadges, getSession: () => session };
 })();
+
+// Red de seguridad: cualquier llamada a Storage.* que falle (sin conexión,
+// error de Supabase) y no haya sido capturada localmente con try/catch cae
+// acá, para nunca fallar en silencio.
+window.addEventListener('unhandledrejection', e => {
+  if (e.reason && e.reason.name === 'StorageError') {
+    Utils.handleStorageError(e.reason);
+    e.preventDefault();
+  }
+});
 
 // Bootstrap
 document.addEventListener('DOMContentLoaded', App.init);

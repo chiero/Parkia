@@ -7,11 +7,20 @@ const PaymentsModule = (() => {
   let filterMonth = '';
   let filterClient = '';
 
-  function render() {
+  async function render() {
     const session   = Auth.getSession();
     const branchId  = session.branchId;
-    const payments  = Storage.payments.getAll(branchId);
-    const clients   = Storage.clients.getAll(branchId);
+
+    const [payments, clients, contracts, spots] = await Promise.all([
+      Storage.payments.getAll(branchId),
+      Storage.clients.getAll(branchId),   // TODOS, no solo activos: un pago puede referenciar un cliente dado de baja
+      Storage.contracts.getAll(branchId),
+      Storage.spots.getAll(branchId)
+    ]);
+
+    const clientsById   = new Map(clients.map(c => [c.id, c]));
+    const contractsById = new Map(contracts.map(c => [c.id, c]));
+    const spotsById     = new Map(spots.map(s => [s.id, s]));
 
     // Filter
     let filtered = [...payments].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -45,7 +54,7 @@ const PaymentsModule = (() => {
           ${clients.map(c => `<option value="${c.id}" ${filterClient===c.id?'selected':''}>${Utils.escapeHtml(c.firstName+' '+c.lastName)}</option>`).join('')}
         </select>
         <span style="margin-left:auto;font-size:.78rem;color:var(--text-secondary)">
-          ${filtered.length} pago${filtered.length!==1?'s':''} · 
+          ${filtered.length} pago${filtered.length!==1?'s':''} ·
           Total: <strong style="color:var(--success)">${Utils.formatCurrency(totalFiltered)}</strong>
         </span>
       </div>
@@ -66,7 +75,7 @@ const PaymentsModule = (() => {
               <th>Monto</th><th>Método</th><th>Registrado</th><th>Acciones</th>
             </tr></thead>
             <tbody>
-              ${filtered.map(p => renderPaymentRow(p)).join('')}
+              ${filtered.map(p => renderPaymentRow(p, clientsById, contractsById, spotsById)).join('')}
             </tbody>
           </table>`}
         </div>
@@ -90,10 +99,11 @@ const PaymentsModule = (() => {
     });
   }
 
-  function renderPaymentRow(p) {
-    const client   = Storage.clients.getById(p.clientId);
-    const contract = Storage.contracts.getById(p.contractId);
-    const spot     = contract ? Storage.spots.getById(contract.spotId) : null;
+  // 100% síncrona: recibe los Maps ya cargados por render(), nada de I/O acá.
+  function renderPaymentRow(p, clientsById, contractsById, spotsById) {
+    const client   = clientsById.get(p.clientId) || null;
+    const contract = contractsById.get(p.contractId) || null;
+    const spot     = contract ? (spotsById.get(contract.spotId) || null) : null;
 
     return `<tr>
       <td><span class="badge badge-muted">${Utils.formatReceiptNumber(p.receiptNumber)}</span></td>
@@ -116,16 +126,23 @@ const PaymentsModule = (() => {
 
   // ─── New payment modal ──────────────────────────────────────────────────────
 
-  function showNewPaymentModal(preselectedClientId = null) {
+  async function showNewPaymentModal(preselectedClientId = null) {
     const session   = Auth.getSession();
     const branchId  = session.branchId;
-    const clients   = Storage.clients.getActive(branchId);
-    const contracts = Storage.contracts.getActive(branchId);
     const today     = new Date().toISOString().split('T')[0];
 
+    const [clients, activeContracts, spots] = await Promise.all([
+      Storage.clients.getActive(branchId),
+      Storage.contracts.getActive(branchId),
+      Storage.spots.getAll(branchId)
+    ]);
+
+    const contractByClient = new Map(activeContracts.map(c => [c.clientId, c]));
+    const spotsById         = new Map(spots.map(s => [s.id, s]));
+
     const clientOptions = clients.map(c => {
-      const contract = contracts.find(ct => ct.clientId === c.id);
-      const spot     = contract ? Storage.spots.getById(contract.spotId) : null;
+      const contract = contractByClient.get(c.id);
+      const spot     = contract ? (spotsById.get(contract.spotId) || null) : null;
       return `<option value="${c.id}" ${preselectedClientId===c.id?'selected':''}>
         ${Utils.escapeHtml(c.firstName+' '+c.lastName)}${spot ? ` — Lugar ${spot.label}` : ''}
       </option>`;
@@ -188,7 +205,7 @@ const PaymentsModule = (() => {
     }
   }
 
-  function _onClientChange() {
+  async function _onClientChange() {
     const session  = Auth.getSession();
     const branchId = session.branchId;
     const clientId = document.getElementById('pf-client')?.value;
@@ -199,10 +216,11 @@ const PaymentsModule = (() => {
 
     if (!clientId || !infoEl) return;
 
-    const contract = Storage.contracts.getActive(branchId).find(c => c.clientId === clientId);
+    const activeContracts = await Storage.contracts.getActive(branchId);
+    const contract = activeContracts.find(c => c.clientId === clientId);
 
     if (contract) {
-      const spot = Storage.spots.getById(contract.spotId);
+      const spot = await Storage.spots.getById(contract.spotId);
       const days = Utils.daysDiff(contract.endDate);
 
       infoEl.style.display = '';
@@ -240,7 +258,7 @@ const PaymentsModule = (() => {
     }
   }
 
-  function savePayment() {
+  async function savePayment() {
     const session   = Auth.getSession();
     const branchId  = session.branchId;
     const clientId  = document.getElementById('pf-client')?.value;
@@ -255,17 +273,18 @@ const PaymentsModule = (() => {
     if (!to)       { Utils.showToast('Indicá la fecha de fin del período', 'error'); return; }
     if (!amount || amount <= 0) { Utils.showToast('Ingresá un monto válido', 'error'); return; }
 
-    const contract = Storage.contracts.getActive(branchId).find(c => c.clientId === clientId);
-    const receiptNum = Storage.payments.getNextReceiptNumber(branchId);
+    const activeContracts = await Storage.contracts.getActive(branchId);
+    const contract = activeContracts.find(c => c.clientId === clientId);
 
-    const payment = Storage.payments.add({
+    // El número de recibo ya no se calcula en el cliente: register_payment() lo
+    // asigna atómicamente en el servidor y lo devuelve en el objeto resultante.
+    const payment = await Storage.payments.add({
       branchId,
       clientId,
       contractId:   contract?.id || null,
       amount,
       date:         from,
       method,
-      receiptNumber: receiptNum,
       periodStart:  from,
       periodEnd:    to,
       notes
@@ -273,12 +292,12 @@ const PaymentsModule = (() => {
 
     // Auto-extend contract end date
     if (contract && contract.period === 'monthly') {
-      Storage.contracts.update(contract.id, { endDate: to });
+      await Storage.contracts.update(contract.id, { endDate: to });
     }
 
     Utils.closeModal();
     Utils.showToast('Pago registrado ✓', 'success');
-    render();
+    await render();
     App.refreshBadges();
 
     // Offer to print receipt
@@ -298,15 +317,19 @@ const PaymentsModule = (() => {
 
   // ─── Receipt ────────────────────────────────────────────────────────────────
 
-  function buildReceiptHTML(paymentId) {
-    const payment  = Storage.payments.getAll(Auth.getSession().branchId).find(p => p.id === paymentId);
+  async function buildReceiptHTML(paymentId) {
+    const branchId = Auth.getSession().branchId;
+    const payments = await Storage.payments.getAll(branchId);
+    const payment  = payments.find(p => p.id === paymentId);
     if (!payment) return null;
 
-    const client   = Storage.clients.getById(payment.clientId);
-    const contract = payment.contractId ? Storage.contracts.getById(payment.contractId) : null;
-    const spot     = contract ? Storage.spots.getById(contract.spotId) : null;
-    const branch   = Storage.branches.getById(payment.branchId);
-    const settings = Storage.settings.get(payment.branchId);
+    const [client, contract, branch, settings] = await Promise.all([
+      Storage.clients.getById(payment.clientId),
+      payment.contractId ? Storage.contracts.getById(payment.contractId) : Promise.resolve(null),
+      Storage.branches.getById(payment.branchId),
+      Storage.settings.get(payment.branchId)
+    ]);
+    const spot = contract ? await Storage.spots.getById(contract.spotId) : null;
 
     if (!client) return null;
 
@@ -346,8 +369,8 @@ const PaymentsModule = (() => {
     `;
   }
 
-  function printReceipt(paymentId) {
-    const html = buildReceiptHTML(paymentId);
+  async function printReceipt(paymentId) {
+    const html = await buildReceiptHTML(paymentId);
     if (!html) { Utils.showToast('No se encontró el pago', 'error'); return; }
     const printArea = document.getElementById('print-area');
     printArea.innerHTML = html;
@@ -355,13 +378,18 @@ const PaymentsModule = (() => {
     setTimeout(() => { printArea.innerHTML = ''; }, 500);
   }
 
-  function sendReceiptWhatsApp(paymentId) {
-    const payment  = Storage.payments.getAll(Auth.getSession().branchId).find(p => p.id === paymentId);
+  async function sendReceiptWhatsApp(paymentId) {
+    const branchId = Auth.getSession().branchId;
+    const payments = await Storage.payments.getAll(branchId);
+    const payment  = payments.find(p => p.id === paymentId);
     if (!payment) return;
-    const client   = Storage.clients.getById(payment.clientId);
-    const contract = payment.contractId ? Storage.contracts.getById(payment.contractId) : null;
-    const spot     = contract ? Storage.spots.getById(contract.spotId) : null;
-    const branch   = Storage.branches.getById(payment.branchId);
+
+    const [client, contract, branch] = await Promise.all([
+      Storage.clients.getById(payment.clientId),
+      payment.contractId ? Storage.contracts.getById(payment.contractId) : Promise.resolve(null),
+      Storage.branches.getById(payment.branchId)
+    ]);
+    const spot = contract ? await Storage.spots.getById(contract.spotId) : null;
 
     if (!client?.phone) { Utils.showToast('El cliente no tiene teléfono registrado', 'warning'); return; }
 

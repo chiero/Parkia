@@ -22,12 +22,6 @@
     <form id="login-form">
       <div style="display:flex;flex-direction:column;gap:1rem;">
 
-        <!-- Branch selector (solo visible si hay más de una) -->
-        <div class="form-group" id="branch-group" style="display:none;">
-          <label class="form-label" for="branch-select">Sucursal</label>
-          <select class="form-control" id="branch-select"></select>
-        </div>
-
         <div class="form-group">
           <label class="form-label" for="login-username">Usuario</label>
           <input class="form-control" type="text" id="login-username"
@@ -56,52 +50,33 @@
 <!-- Hidden print area (for receipts printed from login page — safety) -->
 <div id="print-area" style="display:none;"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabaseClient.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/utils.js"></script>
 <script>
-  Storage.initialize();
+  (async () => {
+    // If already logged in, redirect
+    const existingSession = await Auth.restoreSession();
+    if (existingSession) { window.location.href = 'app.html'; return; }
 
-  // Populate branch selector
-  const branches = Storage.branches.getAll();
-  const branchGroup = document.getElementById('branch-group');
-  const branchSelect = document.getElementById('branch-select');
+    // Login form
+    document.getElementById('login-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn      = document.getElementById('login-btn');
+      const btnText  = document.getElementById('login-btn-text');
+      const errEl    = document.getElementById('login-error');
+      const username = document.getElementById('login-username').value.trim();
+      const password = document.getElementById('login-password').value;
 
-  if (branches.length > 1) {
-    branchGroup.style.display = '';
-    branches.forEach(b => {
-      const opt = document.createElement('option');
-      opt.value = b.id;
-      opt.textContent = b.name;
-      branchSelect.appendChild(opt);
-    });
-  }
+      errEl.classList.remove('show');
+      btn.disabled = true;
+      btnText.textContent = 'Ingresando…';
 
-  // If already logged in, redirect
-  const existingSession = Auth.getSession();
-  if (existingSession) window.location.href = 'app.html';
-
-  // Login form
-  document.getElementById('login-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-    const btn      = document.getElementById('login-btn');
-    const btnText  = document.getElementById('login-btn-text');
-    const errEl    = document.getElementById('login-error');
-    const username = document.getElementById('login-username').value.trim();
-    const password = document.getElementById('login-password').value;
-
-    errEl.classList.remove('show');
-    btn.disabled = true;
-    btnText.textContent = 'Ingresando…';
-
-    setTimeout(() => {
-      const result = Auth.login(username, password);
+      const result = await Auth.login(username, password);
 
       if (result.success) {
-        // Override branch if admin selected one
-        if (branches.length > 1 && branchSelect.value) {
-          Auth.setBranch(branchSelect.value);
-        }
         btnText.textContent = '✓ Acceso concedido';
         setTimeout(() => { window.location.href = 'app.html'; }, 400);
       } else {
@@ -110,8 +85,8 @@
         btn.disabled = false;
         btnText.textContent = 'Ingresar';
       }
-    }, 350);
-  });
+    });
+  })();
 </script>
 </body>
 </html>

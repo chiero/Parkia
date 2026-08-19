@@ -4,18 +4,29 @@
 
 const AlertsModule = (() => {
 
-  function render() {
-    const session   = Auth.getSession();
-    const branchId  = session.branchId;
-    const contracts = Storage.contracts.getActive(branchId);
-    const settings  = Storage.settings.get(branchId);
+  async function render() {
+    const session  = Auth.getSession();
+    const branchId = session.branchId;
+
+    // Una sola carga en paralelo: contratos activos, settings, y TODOS los
+    // clientes/plazas del branch (para resolver nombre de cliente y lugar
+    // de cada contrato con lookups síncronos contra Maps, sin await en el forEach).
+    const [contracts, settings, clients, spots] = await Promise.all([
+      Storage.contracts.getActive(branchId),
+      Storage.settings.get(branchId),
+      Storage.clients.getAll(branchId),
+      Storage.spots.getAll(branchId)
+    ]);
+
+    const clientsById = new Map(clients.map(c => [c.id, c]));
+    const spotsById    = new Map(spots.map(s => [s.id, s]));
 
     // Build alert items
     const alerts = [];
 
     contracts.forEach(c => {
-      const client   = Storage.clients.getById(c.clientId);
-      const spot     = Storage.spots.getById(c.spotId);
+      const client   = clientsById.get(c.clientId) || null;
+      const spot     = spotsById.get(c.spotId) || null;
       const days     = Utils.daysDiff(c.endDate);
       if (days === null) return;
 
@@ -125,14 +136,14 @@ const AlertsModule = (() => {
 
     // Bind buttons
     body.querySelectorAll('[data-alert-action]').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const action = btn.dataset.alertAction;
         const idx    = parseInt(btn.dataset.alertIdx);
         const alert  = alerts[idx];
         if (!alert) return;
 
         if (action === 'pay')       { PaymentsModule.showNewPaymentModal(alert.clientId); }
-        if (action === 'whatsapp')  { sendWhatsApp(alert); }
+        if (action === 'whatsapp')  { await sendWhatsApp(alert); }
         if (action === 'prices')    { App.navigate('prices'); }
         if (action === 'client')    { ClientsModule.showClientDetail(alert.clientId); }
       });
@@ -170,10 +181,10 @@ const AlertsModule = (() => {
     `;
   }
 
-  function sendWhatsApp(alert) {
+  async function sendWhatsApp(alert) {
     if (!alert.phone || !alert.client || !alert.contract) return;
     const session = Auth.getSession();
-    const branch  = Storage.branches.getById(session.branchId);
+    const branch  = await Storage.branches.getById(session.branchId);
     const days    = Utils.daysDiff(alert.contract.endDate);
     const msg = days < 0
       ? `Hola ${alert.client.firstName}! Te avisamos que tu alquiler del lugar *${alert.spotLabel}* en *${branch?.name||'la cochera'}* está *vencido* desde el ${Utils.formatDate(alert.contract.endDate)}.\nPor favor acercate a regularizar el pago: *${Utils.formatCurrency(alert.contract.price)}*. Gracias! 🚗`

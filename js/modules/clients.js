@@ -7,11 +7,17 @@ const ClientsModule = (() => {
   let searchQuery = '';
   let filterStatus = 'all';
 
-  function render() {
+  async function render() {
     const session  = Auth.getSession();
     const branchId = session.branchId;
-    const allClients = Storage.clients.getAll(branchId);
-    const contracts  = Storage.contracts.getAll(branchId);
+
+    const [allClients, contracts, spots] = await Promise.all([
+      Storage.clients.getAll(branchId),
+      Storage.contracts.getAll(branchId),
+      Storage.spots.getAll(branchId)
+    ]);
+
+    const spotsById = new Map(spots.map(s => [s.id, s]));
 
     // Build contract lookup
     const activeContractByClient = {};
@@ -69,7 +75,7 @@ const ClientsModule = (() => {
               <th>Lugar</th><th>Tipo</th><th>Estado</th><th>Vencimiento</th><th>Acciones</th>
             </tr></thead>
             <tbody>
-              ${filtered.map(c => renderClientRow(c, activeContractByClient[c.id])).join('')}
+              ${filtered.map(c => renderClientRow(c, activeContractByClient[c.id], spotsById)).join('')}
             </tbody>
           </table>`}
         </div>
@@ -109,9 +115,9 @@ const ClientsModule = (() => {
     });
   }
 
-  function renderClientRow(client, contract) {
+  function renderClientRow(client, contract, spotsById) {
     const status = Utils.contractStatus(contract);
-    const spot   = contract ? Storage.spots.getById(contract.spotId) : null;
+    const spot   = contract ? spotsById.get(contract.spotId) : null;
 
     return `<tr data-client-id="${client.id}" style="cursor:pointer">
       <td>
@@ -152,8 +158,9 @@ const ClientsModule = (() => {
     showClientForm(null, prefillPlate);
   }
 
-  function showEditClientModal(clientId) {
-    showClientForm(Storage.clients.getById(clientId));
+  async function showEditClientModal(clientId) {
+    const client = await Storage.clients.getById(clientId);
+    showClientForm(client);
   }
 
   function showClientForm(client, prefillPlate) {
@@ -245,7 +252,7 @@ const ClientsModule = (() => {
     });
   }
 
-  function saveClient(existingId) {
+  async function saveClient(existingId) {
     const firstName   = document.getElementById('cf-firstname')?.value.trim();
     const lastName    = document.getElementById('cf-lastname')?.value.trim();
     const plate       = document.getElementById('cf-plate')?.value.trim().toUpperCase();
@@ -271,29 +278,36 @@ const ClientsModule = (() => {
     };
 
     if (existingId) {
-      Storage.clients.update(existingId, data);
+      await Storage.clients.update(existingId, data);
       Utils.showToast('Cliente actualizado ✓', 'success');
     } else {
-      Storage.clients.add({ ...data, branchId: session.branchId });
+      await Storage.clients.add({ ...data, branchId: session.branchId });
       Utils.showToast('Cliente creado correctamente ✓', 'success');
     }
 
     Utils.closeModal();
-    render();
+    await render();
   }
 
   // ─── Client detail & Cuenta Corriente ────────────────────────────────────────
 
-  function getClientLedger(clientId) {
-    const contracts   = Storage.contracts.getByClient(clientId);
-    const payments    = Storage.payments.getByClient(clientId);
-    const adjustments = Storage.adjustments ? Storage.adjustments.getByClient(clientId) : [];
+  async function getClientLedger(clientId) {
+    const session = Auth.getSession();
+
+    const [contracts, payments, adjustments, spots] = await Promise.all([
+      Storage.contracts.getByClient(clientId),
+      Storage.payments.getByClient(clientId),
+      Storage.adjustments ? Storage.adjustments.getByClient(clientId) : Promise.resolve([]),
+      Storage.spots.getAll(session.branchId)
+    ]);
+
+    const spotsById = new Map(spots.map(s => [s.id, s]));
 
     const movements = [];
 
     // Charges from contracts
     contracts.forEach(c => {
-      const spot = c.spotId ? Storage.spots.getById(c.spotId) : null;
+      const spot = c.spotId ? spotsById.get(c.spotId) : null;
       const spotText = spot ? ` (Lugar ${spot.label})` : '';
       const concept = c.rentalType === 'hourly'
         ? `Estadía por hora${spotText}`
@@ -357,15 +371,18 @@ const ClientsModule = (() => {
     };
   }
 
-  function showClientDetail(clientId, defaultTab = 'ledger') {
-    const client    = Storage.clients.getById(clientId);
+  async function showClientDetail(clientId, defaultTab = 'ledger') {
+    const [client, contracts, payments] = await Promise.all([
+      Storage.clients.getById(clientId),
+      Storage.contracts.getByClient(clientId),
+      Storage.payments.getByClient(clientId)
+    ]);
     if (!client) return;
-    const contracts = Storage.contracts.getByClient(clientId);
-    const payments  = Storage.payments.getByClient(clientId);
-    const active    = contracts.find(c => c.active) || null;
-    const spot      = active ? Storage.spots.getById(active.spotId) : null;
-    const status    = Utils.contractStatus(active);
-    const ledger    = getClientLedger(clientId);
+
+    const active = contracts.find(c => c.active) || null;
+    const spot   = active ? await Storage.spots.getById(active.spotId) : null;
+    const status = Utils.contractStatus(active);
+    const ledger = await getClientLedger(clientId);
 
     let balanceBadge = '';
     if (ledger.balance > 0) {
@@ -561,8 +578,8 @@ const ClientsModule = (() => {
     }
   }
 
-  function showAddAdjustmentModal(clientId) {
-    const client = Storage.clients.getById(clientId);
+  async function showAddAdjustmentModal(clientId) {
+    const client = await Storage.clients.getById(clientId);
     if (!client) return;
     const today = new Date().toISOString().split('T')[0];
 
@@ -598,7 +615,7 @@ const ClientsModule = (() => {
     ]);
   }
 
-  function saveAdjustment(clientId) {
+  async function saveAdjustment(clientId) {
     const type   = document.getElementById('adj-type')?.value;
     const desc   = document.getElementById('adj-desc')?.value.trim();
     const amount = parseFloat(document.getElementById('adj-amount')?.value || 0);
@@ -609,7 +626,7 @@ const ClientsModule = (() => {
     if (!date)                 { Utils.showToast('Ingresá la fecha', 'error'); return; }
 
     const session = Auth.getSession();
-    Storage.adjustments.add({
+    await Storage.adjustments.add({
       branchId: session.branchId,
       clientId,
       type,
@@ -620,16 +637,18 @@ const ClientsModule = (() => {
 
     Utils.closeModal();
     Utils.showToast('Ajuste registrado ✓', 'success');
-    showClientDetail(clientId, 'ledger');
+    await showClientDetail(clientId, 'ledger');
   }
 
-  function sendAccountSummaryWhatsApp(clientId) {
-    const client = Storage.clients.getById(clientId);
+  async function sendAccountSummaryWhatsApp(clientId) {
+    const client = await Storage.clients.getById(clientId);
     if (!client || !client.phone) { Utils.showToast('El cliente no tiene teléfono registrado', 'warning'); return; }
 
     const session = Auth.getSession();
-    const branch  = Storage.branches.getById(session.branchId);
-    const ledger  = getClientLedger(clientId);
+    const [branch, ledger] = await Promise.all([
+      Storage.branches.getById(session.branchId),
+      getClientLedger(clientId)
+    ]);
 
     const salText = ledger.balance > 0
       ? `*SALDO PENDIENTE: Debe ${Utils.formatCurrency(ledger.balance)}* ⚠️`
@@ -652,12 +671,15 @@ const ClientsModule = (() => {
     window.open(Utils.whatsappUrl(client.phone, msg), '_blank');
   }
 
-  function printAccountStatement(clientId) {
-    const client  = Storage.clients.getById(clientId);
+  async function printAccountStatement(clientId) {
+    const client  = await Storage.clients.getById(clientId);
     if (!client) return;
+
     const session = Auth.getSession();
-    const branch  = Storage.branches.getById(session.branchId);
-    const ledger  = getClientLedger(clientId);
+    const [branch, ledger] = await Promise.all([
+      Storage.branches.getById(session.branchId),
+      getClientLedger(clientId)
+    ]);
 
     const html = `
       <div class="receipt" style="max-width:600px">
@@ -713,16 +735,16 @@ const ClientsModule = (() => {
     setTimeout(() => { printArea.innerHTML = ''; }, 500);
   }
 
-  function toggleClientActive(clientId) {
-    const client = Storage.clients.getById(clientId);
+  async function toggleClientActive(clientId) {
+    const client = await Storage.clients.getById(clientId);
     if (!client) return;
     const newState = client.active === false ? true : false;
     Utils.confirm(
       `¿${newState ? 'Activar' : 'Desactivar'} a <strong>${client.firstName} ${client.lastName}</strong>?`,
-      () => {
-        Storage.clients.update(clientId, { active: newState });
+      async () => {
+        await Storage.clients.update(clientId, { active: newState });
         Utils.showToast(`Cliente ${newState ? 'activado' : 'desactivado'}`, 'success');
-        render();
+        await render();
       }
     );
   }

@@ -276,12 +276,25 @@ const Utils = (() => {
 
   function formatReceiptNumber(n) { return `REC-${String(n).padStart(6, '0')}`; }
 
+  // ─── Errores de Storage / red ────────────────────────────────────────────
+  // navigator.onLine no es 100% confiable (puede decir "online" con wifi sin
+  // salida real), así que la fuente de verdad es el error real del fetch de
+  // supabase-js. Usar en cada handler de escritura: try { ... } catch (err) { Utils.handleStorageError(err); }
+  function handleStorageError(err, fallbackMsg = 'Ocurrió un error') {
+    const isNetwork = !navigator.onLine || /network|fetch|failed to fetch/i.test(err?.message || '');
+    showToast(
+      isNetwork ? 'Sin conexión a internet. Intentá de nuevo cuando tengas señal.' : `${fallbackMsg}: ${err.message}`,
+      'error'
+    );
+  }
+
   return {
     formatDate, formatDateLong, toInputDate, daysDiff, addMonths, addDays,
     formatCurrency, normalizePhone, whatsappUrl,
     contractStatus, statusBadge, rentalTypeLabel, periodLabel, methodLabel,
     formatDuration, calculateHourlyFee,
     showToast, showModal, closeModal, confirm,
-    truncate, capitalize, escapeHtml, debounce, formatReceiptNumber
+    truncate, capitalize, escapeHtml, debounce, formatReceiptNumber,
+    handleStorageError
   };
 })();

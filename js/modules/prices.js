@@ -4,14 +4,19 @@
 
 const PricesModule = (() => {
 
-  function render() {
+  async function render() {
     const session  = Auth.getSession();
     const branchId = session.branchId;
-    const current  = Storage.prices.getCurrent(branchId);
-    const history  = Storage.prices.getAll(branchId)
+
+    const [current, allPrices, settings] = await Promise.all([
+      Storage.prices.getCurrent(branchId),
+      Storage.prices.getAll(branchId),
+      Storage.settings.get(branchId)
+    ]);
+
+    const history = allPrices
       .sort((a, b) => new Date(b.effectiveDate) - new Date(a.effectiveDate));
 
-    const settings     = Storage.settings.get(branchId);
     const lastUpdate   = settings.lastPriceUpdate || (current?.effectiveDate);
     const daysSince    = lastUpdate ? Math.floor((Date.now() - new Date(lastUpdate)) / 86400000) : 0;
     const alertNeeded  = daysSince >= 90;
@@ -104,9 +109,9 @@ const PricesModule = (() => {
     `;
   }
 
-  function showUpdatePriceModal() {
+  async function showUpdatePriceModal() {
     const session  = Auth.getSession();
-    const current  = Storage.prices.getCurrent(session.branchId);
+    const current  = await Storage.prices.getCurrent(session.branchId);
     const today    = new Date().toISOString().split('T')[0];
 
     Utils.showModal('Actualizar precios', `
@@ -192,7 +197,7 @@ const PricesModule = (() => {
     if (hourlyEl && baseHourly) hourlyEl.value = round(baseHourly);
   }
 
-  function savePrices() {
+  async function savePrices() {
     const session  = Auth.getSession();
     const branchId = session.branchId;
     const fixed    = parseFloat(document.getElementById('price-fixed')?.value || 0);
@@ -209,7 +214,7 @@ const PricesModule = (() => {
     if (!hourly || hourly <= 0){ Utils.showToast('Ingresá el precio por hora', 'error'); return; }
     if (!date)                 { Utils.showToast('Ingresá la fecha de vigencia', 'error'); return; }
 
-    Storage.prices.add({
+    await Storage.prices.add({
       branchId,
       monthlyFixed: fixed,
       monthlyMobile: mobile,
@@ -220,11 +225,11 @@ const PricesModule = (() => {
       notes
     });
 
-    Storage.settings.update(branchId, { lastPriceUpdate: date });
+    await Storage.settings.update(branchId, { lastPriceUpdate: date });
 
     Utils.closeModal();
     Utils.showToast('Precios actualizados ✓', 'success');
-    render();
+    await render();
   }
 
   return { render, showUpdatePriceModal, _applyPct };
