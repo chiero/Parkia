@@ -9,6 +9,9 @@ const SettingsModule = (() => {
   async function render() {
     const session  = Auth.getSession();
     const branchId = session.branchId;
+    const isAdmin  = Auth.isAdmin();
+    if (!isAdmin) activeTab = 'users'; // Encargado: solo tiene la pestaña Usuarios
+
     const [branch, settings] = await Promise.all([
       Storage.branches.getById(branchId),
       Storage.settings.get(branchId)
@@ -17,10 +20,10 @@ const SettingsModule = (() => {
     const body = document.getElementById('settings-body');
     body.innerHTML = `
       <div class="tab-list" id="settings-tabs">
-        <button class="tab-btn ${activeTab==='branch'?'active':''}" data-tab="branch">🏢 Sucursal</button>
+        ${isAdmin ? `<button class="tab-btn ${activeTab==='branch'?'active':''}" data-tab="branch">🏢 Sucursal</button>` : ''}
         <button class="tab-btn ${activeTab==='users'?'active':''}" data-tab="users">👤 Usuarios</button>
-        <button class="tab-btn ${activeTab==='system'?'active':''}" data-tab="system">⚙️ Sistema</button>
-        ${Auth.isAdmin() ? `<button class="tab-btn ${activeTab==='branches'?'active':''}" data-tab="branches">🏗 Sucursales</button>` : ''}
+        ${isAdmin ? `<button class="tab-btn ${activeTab==='system'?'active':''}" data-tab="system">⚙️ Sistema</button>` : ''}
+        ${isAdmin ? `<button class="tab-btn ${activeTab==='branches'?'active':''}" data-tab="branches">🏗 Sucursales</button>` : ''}
       </div>
       <div id="settings-tab-content"></div>
     `;
@@ -143,21 +146,25 @@ const SettingsModule = (() => {
   // ─── Users tab ──────────────────────────────────────────────────────────────
 
   async function renderUsersTab(branchId) {
-    const [users, branches] = await Promise.all([
+    const isAdmin = Auth.isAdmin();
+    const [allUsers, branches] = await Promise.all([
       Storage.users.getAll(),
-      Storage.branches.getAll()
+      isAdmin ? Storage.branches.getAll() : Promise.resolve([])
     ]);
     const branchesById = new Map(branches.map(b => [b.id, b]));
+    // El Encargado solo ve (y puede tocar) el personal de su propia sucursal.
+    const users = isAdmin ? allUsers : allUsers.filter(u => u.branchId === branchId);
+    const canManage = u => isAdmin || (u.role === 'employee' && u.branchId === branchId);
 
     return `
       <div class="card" style="margin-bottom:1rem">
         <div class="card-header">
-          <span class="card-title">👤 Usuarios del sistema</span>
-          ${Auth.isAdmin() ? `<button class="btn btn-primary btn-sm" id="btn-new-user">+ Nuevo usuario</button>` : ''}
+          <span class="card-title">👤 Usuarios${isAdmin ? ' del sistema' : ' de la sucursal'}</span>
+          <button class="btn btn-primary btn-sm" id="btn-new-user">+ Nuevo usuario</button>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th><th>Sucursal</th><th>Estado</th>${Auth.isAdmin()?'<th>Acciones</th>':''}</tr></thead>
+            <thead><tr><th>Nombre</th><th>Usuario</th><th>Rol</th>${isAdmin?'<th>Sucursal</th>':''}<th>Estado</th><th>Acciones</th></tr></thead>
             <tbody>
               ${users.map(u => `
               <tr>
@@ -169,15 +176,15 @@ const SettingsModule = (() => {
                 </td>
                 <td style="font-family:monospace;color:var(--accent)">${Utils.escapeHtml(u.username)}</td>
                 <td><span class="badge ${u.role==='admin'?'badge-danger':u.role==='manager'?'badge-warning':'badge-muted'}">${Auth.ROLE_LABELS[u.role]||u.role}</span></td>
-                <td style="font-size:.78rem;color:var(--text-secondary)">${u.branchId ? (branchesById.get(u.branchId)?.name||'—') : 'Todas'}</td>
+                ${isAdmin ? `<td style="font-size:.78rem;color:var(--text-secondary)">${u.branchId ? (branchesById.get(u.branchId)?.name||'—') : 'Todas'}</td>` : ''}
                 <td>${u.active !== false ? '<span class="badge badge-success">Activo</span>' : '<span class="badge badge-muted">Inactivo</span>'}</td>
-                ${Auth.isAdmin() ? `
                 <td>
+                  ${canManage(u) ? `
                   <div style="display:flex;gap:.25rem">
                     <button class="btn btn-ghost btn-sm" data-user-action="edit" data-user-id="${u.id}">✏️</button>
                     <button class="btn btn-ghost btn-sm" data-user-action="toggle" data-user-id="${u.id}">${u.active!==false?'🚫':'✓'}</button>
-                  </div>
-                </td>` : ''}
+                  </div>` : ''}
+                </td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -200,9 +207,33 @@ const SettingsModule = (() => {
   }
 
   async function showUserModal(user, branchId) {
-    const isEdit = !!user;
-    const u = user || {};
-    const branches = await Storage.branches.getAll();
+    const isEdit  = !!user;
+    const u       = user || {};
+    const isAdmin = Auth.isAdmin();
+    const branches = isAdmin ? await Storage.branches.getAll() : [];
+
+    // Un Encargado solo crea/edita Empleados de su propia sucursal: esos dos
+    // campos quedan fijos (el backend los fuerza igual, esto es solo UI).
+    const roleField = isAdmin ? `
+      <select class="form-control" id="uf-role">
+        <option value="employee" ${u.role==='employee'?'selected':''}>Empleado</option>
+        <option value="manager"  ${u.role==='manager'?'selected':''}>Encargado</option>
+        <option value="admin"    ${u.role==='admin'?'selected':''}>Administrador</option>
+      </select>
+    ` : `
+      <input class="form-control" value="Empleado" disabled>
+      <input type="hidden" id="uf-role" value="employee">
+    `;
+
+    const branchField = isAdmin ? `
+      <select class="form-control" id="uf-branch">
+        <option value="">Todas (Admin)</option>
+        ${branches.map(b => `<option value="${b.id}" ${u.branchId===b.id?'selected':''}>${Utils.escapeHtml(b.name)}</option>`).join('')}
+      </select>
+    ` : `
+      <input class="form-control" value="Tu sucursal" disabled>
+      <input type="hidden" id="uf-branch" value="${branchId}">
+    `;
 
     Utils.showModal(isEdit ? 'Editar usuario' : 'Nuevo usuario', `
       <div style="display:flex;flex-direction:column;gap:1rem">
@@ -227,18 +258,11 @@ const SettingsModule = (() => {
         <div class="form-row cols-2">
           <div class="form-group">
             <label class="form-label">Rol <span class="required">*</span></label>
-            <select class="form-control" id="uf-role">
-              <option value="employee" ${u.role==='employee'?'selected':''}>Empleado</option>
-              <option value="manager"  ${u.role==='manager'?'selected':''}>Encargado</option>
-              <option value="admin"    ${u.role==='admin'?'selected':''}>Administrador</option>
-            </select>
+            ${roleField}
           </div>
           <div class="form-group">
             <label class="form-label">Sucursal</label>
-            <select class="form-control" id="uf-branch">
-              <option value="">Todas (Admin)</option>
-              ${branches.map(b => `<option value="${b.id}" ${u.branchId===b.id?'selected':''}>${Utils.escapeHtml(b.name)}</option>`).join('')}
-            </select>
+            ${branchField}
           </div>
         </div>
       </div>

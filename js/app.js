@@ -64,15 +64,14 @@ const App = (() => {
     document.getElementById('user-role').textContent   = Auth.ROLE_LABELS[session.role] || session.role;
     document.getElementById('user-avatar').textContent = (session.name || 'U').charAt(0).toUpperCase();
 
-    // Hide admin sections for non-admins
+    // Hide admin sections for non-admins. Los "Encargado" sí ven Configuración
+    // (solo la pestaña Usuarios, para gestionar el personal de su sucursal).
     if (!Auth.isManagerOrAbove()) {
       document.getElementById('nav-prices').style.display  = 'none';
       document.getElementById('nav-reports').style.display = 'none';
       document.getElementById('nav-settings').style.display = 'none';
       document.getElementById('admin-section-label').style.display = 'none';
       document.getElementById('nav-clients').style.display = 'none';
-    } else if (!Auth.isAdmin()) {
-      document.getElementById('nav-settings').style.display = 'none';
     }
   }
 

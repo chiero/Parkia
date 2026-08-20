@@ -40,15 +40,17 @@ Deno.serve(async (req) => {
 
     const { data: callerProfile, error: profileErr } = await callerClient
       .from('profiles')
-      .select('role')
+      .select('role, branch_id')
       .eq('id', userData.user.id)
       .maybeSingle()
 
-    if (profileErr || callerProfile?.role !== 'admin') {
-      return json({ error: 'Solo un administrador puede crear usuarios' }, 403)
+    const callerRole = callerProfile?.role
+    if (profileErr || !['admin', 'manager'].includes(callerRole)) {
+      return json({ error: 'No tenés permiso para crear usuarios' }, 403)
     }
 
-    const { username, password, name, role, branchId } = await req.json()
+    const body = await req.json()
+    let { username, password, name, role, branchId } = body
 
     if (!username || !password || !name || !role) {
       return json({ error: 'Faltan datos obligatorios' }, 400)
@@ -58,6 +60,16 @@ Deno.serve(async (req) => {
     }
     if (!['admin', 'manager', 'employee'].includes(role)) {
       return json({ error: 'Rol inválido' }, 400)
+    }
+
+    // Un encargado solo puede crear Empleados dentro de su propia sucursal,
+    // sin importar lo que mande el formulario (defensa en profundidad —
+    // el front ya deja estos campos fijos, pero esto es lo que realmente
+    // impide la escalada de privilegios).
+    if (callerRole === 'manager') {
+      role = 'employee'
+      branchId = callerProfile.branch_id
+      if (!branchId) return json({ error: 'Tu usuario no tiene sucursal asignada' }, 400)
     }
 
     const cleanUsername = String(username).trim().toLowerCase()

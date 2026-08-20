@@ -165,25 +165,54 @@ create table receipt_counters (
 -- 2. RLS — HELPERS Y POLICIES
 -- ═══════════════════════════════════════════════════════════════════════════
 
--- SECURITY DEFINER: sin esto, estas funciones vuelven a disparar las policies
--- de "profiles" al consultarla desde adentro, lo que puede causar recursión
--- infinita al evaluarlas para CUALQUIER tabla que las use (incluida profiles
--- misma). Con SECURITY DEFINER, la consulta interna corre sin RLS.
-create or replace function auth_branch_id() returns uuid
-language sql stable security definer set search_path = public as $$
-  select branch_id from profiles where id = auth.uid()
+-- IMPORTANTE: estas funciones NO consultan la tabla "profiles". En Supabase,
+-- ni SECURITY DEFINER ni el ser owner de la tabla alcanzan para saltarse RLS
+-- de forma confiable — consultarla desde adentro genera recursión infinita
+-- ("stack depth limit exceeded") en cualquier policy que las use. En cambio,
+-- leen rol/sucursal directo del JWT (app_metadata), sin tocar ninguna tabla
+-- protegida por RLS. Ver el trigger sync_profile_to_auth_metadata más abajo,
+-- que mantiene ese app_metadata sincronizado con "profiles".
+create or replace function auth_is_admin() returns boolean
+language sql stable as $$
+  select coalesce((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin', false)
 $$;
 
-create or replace function auth_is_admin() returns boolean
-language sql stable security definer set search_path = public as $$
-  select coalesce((select role = 'admin' from profiles where id = auth.uid()), false)
+create or replace function auth_branch_id() returns uuid
+language sql stable as $$
+  select (auth.jwt() -> 'app_metadata' ->> 'branch_id')::uuid
 $$;
+
+create or replace function auth_role() returns text
+language sql stable as $$
+  select auth.jwt() -> 'app_metadata' ->> 'role'
+$$;
+
+create or replace function sync_profile_to_auth_metadata() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  update auth.users
+  set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+    || jsonb_build_object('role', new.role, 'branch_id', new.branch_id)
+  where id = new.id;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_sync_profile_to_auth_metadata on profiles;
+create trigger trg_sync_profile_to_auth_metadata
+after insert or update of role, branch_id on profiles
+for each row execute function sync_profile_to_auth_metadata();
 
 alter table profiles enable row level security;
 create policy profiles_read_own   on profiles for select using (id = auth.uid());
 create policy profiles_read_admin on profiles for select using (auth_is_admin());
+create policy profiles_read_branch_manager on profiles for select
+  using (auth_role() = 'manager' and branch_id = auth_branch_id());
 create policy profiles_admin_all  on profiles for all
   using (auth_is_admin()) with check (auth_is_admin());
+create policy profiles_manager_update_employee on profiles for update
+  using (auth_role() = 'manager' and branch_id = auth_branch_id() and role = 'employee')
+  with check (auth_role() = 'manager' and branch_id = auth_branch_id() and role = 'employee');
 
 alter table branches enable row level security;
 create policy branches_select on branches for select
