@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Chiclana Parking — Sistema</title>
   <meta name="description" content="Sistema de gestión de cocheras Chiclana Parking.">
+  <script>document.documentElement.dataset.theme = localStorage.getItem('cp_theme') || 'dark';</script>
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -88,6 +89,9 @@
         <div class="user-name" id="user-name">Administrador</div>
         <div class="user-role" id="user-role">admin</div>
       </div>
+      <button class="btn-theme-toggle" id="btn-theme-toggle" title="Cambiar tema" aria-label="Cambiar tema">
+        <span data-theme-icon>☀️</span>
+      </button>
       <button class="btn-logout" id="btn-logout" title="Cerrar sesión" aria-label="Cerrar sesión">⎋</button>
     </div>
   </aside>

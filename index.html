@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Parkia — Ingreso</title>
   <meta name="description" content="Sistema de gestión de cocheras Parkia. Ingrese con sus credenciales.">
+  <script>document.documentElement.dataset.theme = localStorage.getItem('cp_theme') || 'dark';</script>
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
 <div class="login-page">
+  <button class="btn-theme-toggle-login" id="btn-theme-toggle-login" title="Cambiar tema" aria-label="Cambiar tema">
+    <span data-theme-icon>☀️</span>
+  </button>
   <div class="login-card">
 
     <div class="login-logo">
@@ -57,6 +61,12 @@
 <script src="js/utils.js"></script>
 <script>
   (async () => {
+    // Theme toggle
+    const themeBtn = document.getElementById('btn-theme-toggle-login');
+    const themeIcon = themeBtn.querySelector('[data-theme-icon]');
+    themeIcon.textContent = Utils.getTheme() === 'light' ? '🌙' : '☀️';
+    themeBtn.addEventListener('click', () => Utils.toggleTheme());
+
     // If already logged in, redirect
     const existingSession = await Auth.restoreSession();
     if (existingSession) { window.location.href = 'app.html'; return; }

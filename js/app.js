@@ -12,9 +12,10 @@ const App = (() => {
     session = await Auth.requireAuth();
     if (!session) return;
 
-    // Se ata primero y fuera de cualquier try/catch: si algo más abajo falla
+    // Se atan primero y fuera de cualquier try/catch: si algo más abajo falla
     // (ej. un usuario sin sucursal asignada), siempre queda una forma de salir.
     bindLogout();
+    bindThemeToggle();
 
     try {
       await setupUI();
@@ -51,6 +52,14 @@ const App = (() => {
     document.getElementById('btn-logout')?.addEventListener('click', () => {
       Utils.confirm('¿Cerrar sesión?', () => Auth.logout(), null, false);
     });
+  }
+
+  function bindThemeToggle() {
+    const btn = document.getElementById('btn-theme-toggle');
+    if (!btn) return;
+    const icon = btn.querySelector('[data-theme-icon]');
+    if (icon) icon.textContent = Utils.getTheme() === 'light' ? '🌙' : '☀️';
+    btn.addEventListener('click', () => Utils.toggleTheme());
   }
 
   // ─── UI ────────────────────────────────────────────────────────────────────

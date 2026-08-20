@@ -276,6 +276,19 @@ const Utils = (() => {
 
   function formatReceiptNumber(n) { return `REC-${String(n).padStart(6, '0')}`; }
 
+  // ─── Tema claro/oscuro ────────────────────────────────────────────────────
+
+  function getTheme() { return document.documentElement.dataset.theme || 'dark'; }
+
+  function toggleTheme() {
+    const next = getTheme() === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('cp_theme', next); } catch {}
+    document.querySelectorAll('[data-theme-icon]').forEach(el => {
+      el.textContent = next === 'light' ? '🌙' : '☀️';
+    });
+  }
+
   // ─── Errores de Storage / red ────────────────────────────────────────────
   // navigator.onLine no es 100% confiable (puede decir "online" con wifi sin
   // salida real), así que la fuente de verdad es el error real del fetch de
@@ -295,6 +308,6 @@ const Utils = (() => {
     formatDuration, calculateHourlyFee,
     showToast, showModal, closeModal, confirm,
     truncate, capitalize, escapeHtml, debounce, formatReceiptNumber,
-    handleStorageError
+    handleStorageError, getTheme, toggleTheme
   };
 })();

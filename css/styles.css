@@ -54,6 +54,44 @@
   --transition: all .2s ease;
 }
 
+/* ─── Tema claro ─────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg-primary:     #f6f8fa;
+  --bg-secondary:   #ffffff;
+  --bg-tertiary:    #eef1f4;
+  --bg-hover:       #e6e9ed;
+  --border:         #d0d7de;
+  --border-subtle:  #eaeef2;
+
+  --text-primary:   #1f2328;
+  --text-secondary: #57606a;
+  --text-muted:     #6e7781;
+
+  --accent:         #2563eb;
+  --accent-hover:   #1d4ed8;
+  --accent-bg:      rgba(37,99,235,.10);
+
+  --success:        #1a7f37;
+  --success-bg:     rgba(26,127,55,.10);
+  --danger:         #cf222e;
+  --danger-bg:      rgba(207,34,46,.10);
+  --warning:        #9a6700;
+  --warning-bg:     rgba(154,103,0,.10);
+  --info:           #0969da;
+  --info-bg:        rgba(9,105,218,.10);
+  --purple:         #8250df;
+  --purple-bg:      rgba(130,80,223,.10);
+
+  --spot-free:     #1a7f37;
+  --spot-fixed:    #cf222e;
+  --spot-mobile:   #9a6700;
+  --spot-expiring: #bc4c00;
+  --spot-disabled: #8c959f;
+
+  --shadow:    0 4px 16px rgba(140,149,159,.25);
+  --shadow-lg: 0 8px 32px rgba(140,149,159,.35);
+}
+
 /* ─── Reset ──────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 14px; scroll-behavior: smooth; }
@@ -113,6 +151,7 @@ button, input, select, textarea { font-family: inherit; }
    ════════════════════════════════════════════════════════════ */
 .login-page {
   min-height: 100vh;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -335,6 +374,32 @@ button, input, select, textarea { font-family: inherit; }
   font-size: 1rem;
 }
 .sidebar-user .btn-logout:hover { color: var(--danger); background: var(--danger-bg); }
+.sidebar-user .btn-theme-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: .3rem;
+  border-radius: var(--radius-sm);
+  transition: var(--transition);
+  font-size: 1rem;
+}
+.sidebar-user .btn-theme-toggle:hover { color: var(--accent); background: var(--accent-bg); }
+
+.btn-theme-toggle-login {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: .4rem .55rem;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  transition: var(--transition);
+}
+.btn-theme-toggle-login:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ─── Main content ───────────────────────────────────────── */
 .main-content {
