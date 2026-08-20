@@ -97,9 +97,24 @@ const Storage = (() => {
       getAll:         ()             => getAll('profiles'),
       getById:        (id)           => getById('profiles', id),
       getByUsername:  async (name)   => (await getAll('profiles', { username: name }))[0] || null,
-      update:         (id, u)        => updateById('profiles', id, u)
-      // add()/remove() no se exponen: la creación/baja de usuarios se hace en
-      // Supabase Studio (requiere la service role key, ver plan de migración).
+      update:         (id, u)        => updateById('profiles', id, u),
+
+      // Crear un usuario requiere la service role key (Auth admin API), que
+      // nunca debe viajar al navegador. La Edge Function "create-user" la
+      // guarda del lado del servidor y valida que quien llama sea admin.
+      add: async (u) => {
+        const { data, error } = await sb.functions.invoke('create-user', {
+          body: { username: u.username, password: u.password, name: u.name, role: u.role, branchId: u.branchId || null }
+        });
+        if (error) {
+          let message = error.message;
+          try { const body = await error.context?.json(); if (body?.error) message = body.error; } catch {}
+          throw new StorageError(message || 'No se pudo crear el usuario', error);
+        }
+        if (data?.error) throw new StorageError(data.error);
+        return fromDb(data.profile);
+      }
+      // remove() no se expone: dar de baja un usuario es toggle de "active", no borrado.
     },
 
     spots: {

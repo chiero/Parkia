@@ -12,18 +12,45 @@ const App = (() => {
     session = await Auth.requireAuth();
     if (!session) return;
 
-    await setupUI();
-    setupNavigation();
-    setupMobileMenu();
-    setupOfflineBanner();
-    await setupBranchSelector();
-    await navigate('dashboard');
-    await refreshBadges();
+    // Se ata primero y fuera de cualquier try/catch: si algo más abajo falla
+    // (ej. un usuario sin sucursal asignada), siempre queda una forma de salir.
+    bindLogout();
 
-    if (typeof RealtimeModule !== 'undefined') RealtimeModule.subscribe(session.branchId);
+    try {
+      await setupUI();
+      setupNavigation();
+      setupMobileMenu();
+      setupOfflineBanner();
+      await setupBranchSelector();
+      await navigate('dashboard');
+      await refreshBadges();
 
-    // Refresh badges every 5 minutes
-    setInterval(refreshBadges, 5 * 60 * 1000);
+      if (typeof RealtimeModule !== 'undefined') RealtimeModule.subscribe(session.branchId);
+
+      // Refresh badges every 5 minutes
+      setInterval(refreshBadges, 5 * 60 * 1000);
+    } catch (err) {
+      console.error('Error al iniciar la app:', err);
+      const main = document.getElementById('main-content');
+      if (main) {
+        main.innerHTML = `
+          <div style="padding:3rem 1.5rem;text-align:center;max-width:480px;margin:0 auto">
+            <p style="font-size:1rem;font-weight:700;color:var(--danger)">No se pudo cargar el sistema</p>
+            <p style="color:var(--text-secondary);font-size:.85rem;margin-top:.6rem">${Utils.escapeHtml(err.message || 'Error desconocido')}</p>
+            <p style="color:var(--text-muted);font-size:.78rem;margin-top:.9rem">
+              Si el problema persiste, es probable que tu usuario no tenga una sucursal asignada.
+              Contactá al administrador, o cerrá sesión con el botón de abajo a la izquierda.
+            </p>
+          </div>
+        `;
+      }
+    }
+  }
+
+  function bindLogout() {
+    document.getElementById('btn-logout')?.addEventListener('click', () => {
+      Utils.confirm('¿Cerrar sesión?', () => Auth.logout(), null, false);
+    });
   }
 
   // ─── UI ────────────────────────────────────────────────────────────────────
@@ -47,10 +74,6 @@ const App = (() => {
     } else if (!Auth.isAdmin()) {
       document.getElementById('nav-settings').style.display = 'none';
     }
-
-    document.getElementById('btn-logout').addEventListener('click', () => {
-      Utils.confirm('¿Cerrar sesión?', () => Auth.logout(), null, false);
-    });
   }
 
   // ─── Navigation ────────────────────────────────────────────────────────────

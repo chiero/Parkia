@@ -187,20 +187,7 @@ const SettingsModule = (() => {
   }
 
   function bindUsersTab(branchId) {
-    document.getElementById('btn-new-user')?.addEventListener('click', () => {
-      // La creación de usuarios se hace en Supabase (Authentication → Users +
-      // la tabla profiles), no desde la app: requiere la service role key, que
-      // nunca debe exponerse en el cliente. Ver plan de migración, Fase 6.
-      Utils.showModal('Nuevo usuario', `
-        <p style="color:var(--text-secondary);font-size:.85rem;line-height:1.5">
-          Los usuarios nuevos se crean directamente en Supabase (Authentication → Users,
-          con email <code>usuario@parking.local</code>), no desde esta pantalla.
-          Una vez creado ahí, va a aparecer en esta lista para editar su nombre, rol o sucursal.
-        </p>
-      `, [
-        { id: 'ok-new-user', label: 'Entendido', cls: 'btn-primary', handler: () => {} }
-      ]);
-    });
+    document.getElementById('btn-new-user')?.addEventListener('click', () => showUserModal(null, branchId));
 
     document.querySelectorAll('[data-user-action]').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -213,56 +200,82 @@ const SettingsModule = (() => {
   }
 
   async function showUserModal(user, branchId) {
-    if (!user) return;
+    const isEdit = !!user;
+    const u = user || {};
     const branches = await Storage.branches.getAll();
 
-    Utils.showModal('Editar usuario', `
+    Utils.showModal(isEdit ? 'Editar usuario' : 'Nuevo usuario', `
       <div style="display:flex;flex-direction:column;gap:1rem">
         <div class="form-row cols-2">
           <div class="form-group">
             <label class="form-label">Nombre completo <span class="required">*</span></label>
-            <input class="form-control" id="uf-name" value="${Utils.escapeHtml(user.name||'')}">
+            <input class="form-control" id="uf-name" value="${Utils.escapeHtml(u.name||'')}">
           </div>
           <div class="form-group">
-            <label class="form-label">Usuario</label>
-            <input class="form-control" id="uf-username" value="${Utils.escapeHtml(user.username||'')}" disabled>
-            <span class="form-hint">El usuario y la contraseña se gestionan en Supabase</span>
+            <label class="form-label">Usuario <span class="required">*</span></label>
+            <input class="form-control" id="uf-username" value="${Utils.escapeHtml(u.username||'')}" ${isEdit?'disabled':''}>
+            ${isEdit ? '<span class="form-hint">El usuario no se puede cambiar</span>' : ''}
           </div>
         </div>
+        ${!isEdit ? `
+        <div class="form-group">
+          <label class="form-label">Contraseña <span class="required">*</span></label>
+          <input class="form-control" id="uf-password" type="password" placeholder="Mínimo 6 caracteres">
+        </div>` : `
+        <p style="font-size:.78rem;color:var(--text-muted)">La contraseña se cambia desde Supabase (Authentication → Users), no desde acá.</p>
+        `}
         <div class="form-row cols-2">
           <div class="form-group">
             <label class="form-label">Rol <span class="required">*</span></label>
             <select class="form-control" id="uf-role">
-              <option value="employee" ${user.role==='employee'?'selected':''}>Empleado</option>
-              <option value="manager"  ${user.role==='manager'?'selected':''}>Encargado</option>
-              <option value="admin"    ${user.role==='admin'?'selected':''}>Administrador</option>
+              <option value="employee" ${u.role==='employee'?'selected':''}>Empleado</option>
+              <option value="manager"  ${u.role==='manager'?'selected':''}>Encargado</option>
+              <option value="admin"    ${u.role==='admin'?'selected':''}>Administrador</option>
             </select>
           </div>
           <div class="form-group">
             <label class="form-label">Sucursal</label>
             <select class="form-control" id="uf-branch">
               <option value="">Todas (Admin)</option>
-              ${branches.map(b => `<option value="${b.id}" ${user.branchId===b.id?'selected':''}>${Utils.escapeHtml(b.name)}</option>`).join('')}
+              ${branches.map(b => `<option value="${b.id}" ${u.branchId===b.id?'selected':''}>${Utils.escapeHtml(b.name)}</option>`).join('')}
             </select>
           </div>
         </div>
       </div>
     `, [
-      { id: 'save-user', label: 'Guardar cambios', cls: 'btn-primary', close: false,
-        handler: () => saveUser(user.id) },
+      { id: 'save-user', label: isEdit ? 'Guardar cambios' : 'Crear usuario', cls: 'btn-primary', close: false,
+        handler: () => saveUser(user?.id || null) },
       { id: 'cancel-user', label: 'Cancelar', cls: 'btn-secondary', handler: () => {} }
     ]);
   }
 
   async function saveUser(existingId) {
     const name     = document.getElementById('uf-name')?.value.trim();
+    const username = document.getElementById('uf-username')?.value.trim();
+    const password = document.getElementById('uf-password')?.value;
     const role     = document.getElementById('uf-role')?.value || 'employee';
     const branchId = document.getElementById('uf-branch')?.value || null;
 
     if (!name) { Utils.showToast('El nombre es obligatorio', 'error'); return; }
+    if (role !== 'admin' && !branchId) {
+      Utils.showToast('Los usuarios con rol Empleado o Encargado necesitan una sucursal asignada', 'error');
+      return;
+    }
 
-    await Storage.users.update(existingId, { name, role, branchId: branchId || null });
-    Utils.showToast('Usuario actualizado ✓', 'success');
+    try {
+      if (existingId) {
+        await Storage.users.update(existingId, { name, role, branchId: branchId || null });
+        Utils.showToast('Usuario actualizado ✓', 'success');
+      } else {
+        if (!username) { Utils.showToast('El usuario es obligatorio', 'error'); return; }
+        if (!password || password.length < 6) { Utils.showToast('La contraseña debe tener al menos 6 caracteres', 'error'); return; }
+        await Storage.users.add({ username, password, name, role, branchId: branchId || null });
+        Utils.showToast('Usuario creado ✓', 'success');
+      }
+    } catch (err) {
+      Utils.showToast(err.message || 'No se pudo guardar el usuario', 'error');
+      return;
+    }
 
     Utils.closeModal();
     await render();
