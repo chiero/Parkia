@@ -36,7 +36,7 @@ const Dashboard = (() => {
     // Income this month
     const now        = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-    const monthPayments = payments.filter(p => p.createdAt >= monthStart);
+    const monthPayments = payments.filter(p => p.createdAt >= monthStart && !p.voided);
     const monthIncome   = monthPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
 
     // Alerts count
@@ -235,12 +235,15 @@ const Dashboard = (() => {
           const client   = clientsMap.get(p.clientId) || null;
           const contract = contractsMap.get(p.contractId) || null;
           const spot     = contract ? (spotsMap.get(contract.spotId) || null) : null;
-          return `<tr>
-            <td><span class="badge badge-muted">${Utils.formatReceiptNumber(p.receiptNumber)}</span></td>
+          return `<tr ${p.voided?'style="opacity:.55"':''}>
+            <td>
+              <span class="badge badge-muted">${Utils.formatReceiptNumber(p.receiptNumber)}</span>
+              ${p.voided ? '<span class="badge badge-danger" style="margin-left:.35rem">ANULADO</span>' : ''}
+            </td>
             <td class="fw-600">${client ? Utils.escapeHtml(`${client.firstName} ${client.lastName}`) : '—'}</td>
             <td>${spot ? `<span class="badge badge-accent">${spot.label}</span>` : '—'}</td>
             <td style="font-size:.78rem;color:var(--text-secondary)">${Utils.formatDate(p.periodStart)} → ${Utils.formatDate(p.periodEnd)}</td>
-            <td class="fw-600 text-success">${Utils.formatCurrency(p.amount)}</td>
+            <td class="fw-600 ${p.voided?'':'text-success'}" style="${p.voided?'text-decoration:line-through':''}">${Utils.formatCurrency(p.amount)}</td>
             <td>${Utils.methodLabel(p.method)}</td>
             <td style="color:var(--text-muted)">${Utils.formatDate(p.createdAt)}</td>
           </tr>`;

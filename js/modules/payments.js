@@ -32,7 +32,7 @@ const PaymentsModule = (() => {
       filtered = filtered.filter(p => p.clientId === filterClient);
     }
 
-    const totalFiltered = filtered.reduce((s, p) => s + (p.amount || 0), 0);
+    const totalFiltered = filtered.filter(p => !p.voided).reduce((s, p) => s + (p.amount || 0), 0);
 
     // Month options
     const months = [...new Set(payments.map(p => p.createdAt?.slice(0, 7)).filter(Boolean))].sort().reverse();
@@ -95,6 +95,7 @@ const PaymentsModule = (() => {
         const { payAction, payId } = btn.dataset;
         if (payAction === 'print')    printReceipt(payId);
         if (payAction === 'whatsapp') sendReceiptWhatsApp(payId);
+        if (payAction === 'void')     showVoidPaymentModal(payId);
       });
     });
   }
@@ -104,24 +105,55 @@ const PaymentsModule = (() => {
     const client   = clientsById.get(p.clientId) || null;
     const contract = contractsById.get(p.contractId) || null;
     const spot     = contract ? (spotsById.get(contract.spotId) || null) : null;
+    const voided   = !!p.voided;
 
-    return `<tr>
-      <td><span class="badge badge-muted">${Utils.formatReceiptNumber(p.receiptNumber)}</span></td>
+    return `<tr ${voided ? 'style="opacity:.55"' : ''}>
+      <td>
+        <span class="badge badge-muted">${Utils.formatReceiptNumber(p.receiptNumber)}</span>
+        ${voided ? '<span class="badge badge-danger" style="margin-left:.35rem">ANULADO</span>' : ''}
+      </td>
       <td class="fw-600">${client ? Utils.escapeHtml(`${client.firstName} ${client.lastName}`) : '—'}</td>
       <td>${spot ? `<span class="badge badge-accent">${spot.label}</span>` : '—'}</td>
       <td style="font-size:.78rem;color:var(--text-secondary)">
         ${Utils.formatDate(p.periodStart)} → ${Utils.formatDate(p.periodEnd)}
       </td>
-      <td class="fw-600 text-success">${Utils.formatCurrency(p.amount)}</td>
+      <td class="fw-600 ${voided?'':'text-success'}" style="${voided?'text-decoration:line-through':''}">${Utils.formatCurrency(p.amount)}</td>
       <td>${Utils.methodLabel(p.method)}</td>
       <td style="color:var(--text-muted)">${Utils.formatDate(p.createdAt)}</td>
       <td>
         <div style="display:flex;gap:.25rem">
           <button class="btn btn-ghost btn-icon btn-sm" data-pay-action="print" data-pay-id="${p.id}" title="Imprimir recibo">🖨️</button>
           ${client && client.phone ? `<button class="btn btn-ghost btn-icon btn-sm" data-pay-action="whatsapp" data-pay-id="${p.id}" title="Enviar por WhatsApp">📲</button>` : ''}
+          ${!voided && Auth.isManagerOrAbove() ? `<button class="btn btn-ghost btn-icon btn-sm" data-pay-action="void" data-pay-id="${p.id}" title="Anular pago">🚫</button>` : ''}
         </div>
       </td>
     </tr>`;
+  }
+
+  function showVoidPaymentModal(paymentId) {
+    Utils.showModal('Anular pago', `
+      <div style="display:flex;flex-direction:column;gap:1rem">
+        <p style="color:var(--text-secondary);font-size:.85rem">
+          El pago va a quedar marcado como <strong>ANULADO</strong> en el historial — no se borra,
+          pero deja de contar en los ingresos y en la cuenta corriente del cliente.
+        </p>
+        <div class="form-group">
+          <label class="form-label">Motivo (opcional)</label>
+          <input class="form-control" id="void-reason" placeholder="Ej: Monto incorrecto, cliente equivocado...">
+        </div>
+      </div>
+    `, [
+      { id: 'confirm-void', label: '🚫 Anular pago', cls: 'btn-danger', close: false, handler: () => confirmVoidPayment(paymentId) },
+      { id: 'cancel-void', label: 'Cancelar', cls: 'btn-secondary', handler: () => {} }
+    ]);
+  }
+
+  async function confirmVoidPayment(paymentId) {
+    const reason = document.getElementById('void-reason')?.value.trim() || null;
+    await Storage.payments.void(paymentId, reason);
+    Utils.closeModal();
+    Utils.showToast('Pago anulado', 'success');
+    await render();
   }
 
   // ─── New payment modal ──────────────────────────────────────────────────────

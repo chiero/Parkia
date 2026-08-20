@@ -323,15 +323,16 @@ const ClientsModule = (() => {
       });
     });
 
-    // Credits from payments
+    // Credits from payments (los anulados quedan visibles para el historial,
+    // pero con haber en $0 — no deben afectar el saldo de la cuenta)
     payments.forEach(p => {
       movements.push({
         id: p.id,
         date: p.createdAt || p.date,
         type: 'payment',
-        concept: `Pago Recibo ${Utils.formatReceiptNumber(p.receiptNumber)} (${Utils.methodLabel(p.method)})`,
+        concept: `${p.voided ? '[ANULADO] ' : ''}Pago Recibo ${Utils.formatReceiptNumber(p.receiptNumber)} (${Utils.methodLabel(p.method)})`,
         debe: 0,
-        haber: p.amount || 0,
+        haber: p.voided ? 0 : (p.amount || 0),
         receiptNumber: p.receiptNumber
       });
     });

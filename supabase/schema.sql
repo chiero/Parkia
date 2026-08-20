@@ -139,6 +139,10 @@ create table payments (
   updated_at     timestamptz not null default now(),
   unique (branch_id, receipt_number)
 );
+alter table payments add column voided boolean not null default false;
+alter table payments add column voided_at timestamptz;
+alter table payments add column void_reason text;
+
 create index idx_payments_branch_created on payments(branch_id, created_at desc);
 create index idx_payments_client on payments(client_id);
 create index idx_payments_contract on payments(contract_id);

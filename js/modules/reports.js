@@ -19,6 +19,10 @@ const ReportsModule = (() => {
     const month = now.getMonth();
     const year  = now.getFullYear();
 
+    // Los pagos anulados no cuentan en ningún total financiero del reporte,
+    // pero siguen existiendo en el historial de la pantalla de Pagos.
+    const validPayments = payments.filter(p => !p.voided);
+
     // ─── Income this month ─────────────────────────────────────────────────
     const thisMonthKey = `${year}-${String(month+1).padStart(2,'0')}`;
     const lastMonthKey = (() => {
@@ -26,8 +30,8 @@ const ReportsModule = (() => {
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
     })();
 
-    const thisMonthPays = payments.filter(p => (p.createdAt||'').startsWith(thisMonthKey));
-    const lastMonthPays = payments.filter(p => (p.createdAt||'').startsWith(lastMonthKey));
+    const thisMonthPays = validPayments.filter(p => (p.createdAt||'').startsWith(thisMonthKey));
+    const lastMonthPays = validPayments.filter(p => (p.createdAt||'').startsWith(lastMonthKey));
     const thisIncome    = thisMonthPays.reduce((s,p) => s+(p.amount||0), 0);
     const lastIncome    = lastMonthPays.reduce((s,p) => s+(p.amount||0), 0);
     const incomeChange  = lastIncome > 0 ? Math.round(((thisIncome-lastIncome)/lastIncome)*100) : null;
@@ -73,7 +77,7 @@ const ReportsModule = (() => {
     for (let i = 5; i >= 0; i--) {
       const d   = new Date(year, month - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-      const inc = payments.filter(p => (p.createdAt||'').startsWith(key)).reduce((s,p) => s+(p.amount||0), 0);
+      const inc = validPayments.filter(p => (p.createdAt||'').startsWith(key)).reduce((s,p) => s+(p.amount||0), 0);
       monthlyIncome.push({
         label: d.toLocaleDateString('es-AR', {month:'short', year:'2-digit'}),
         amount: inc,
@@ -84,7 +88,7 @@ const ReportsModule = (() => {
 
     // ─── Payment methods breakdown ─────────────────────────────────────────
     const methods = { cash: 0, transfer: 0, other: 0 };
-    payments.forEach(p => { methods[p.method] = (methods[p.method]||0) + (p.amount||0); });
+    validPayments.forEach(p => { methods[p.method] = (methods[p.method]||0) + (p.amount||0); });
     const totalAll = Object.values(methods).reduce((s,v) => s+v, 0);
 
     const body = document.getElementById('reports-body');
@@ -104,9 +108,9 @@ const ReportsModule = (() => {
 
         <div class="stat-card">
           <div class="stat-icon" style="background:var(--accent-bg);color:var(--accent)">📋</div>
-          <div class="stat-value">${payments.length}</div>
+          <div class="stat-value">${validPayments.length}</div>
           <div class="stat-label">Total pagos registrados</div>
-          <div class="stat-change">${Utils.formatCurrency(payments.reduce((s,p)=>s+(p.amount||0),0))} acumulado</div>
+          <div class="stat-change">${Utils.formatCurrency(validPayments.reduce((s,p)=>s+(p.amount||0),0))} acumulado</div>
         </div>
 
         <div class="stat-card">

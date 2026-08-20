@@ -190,7 +190,13 @@ const Storage = (() => {
         });
         check(error);
         return fromDb(data);
-      }
+      },
+
+      // No se borra nunca un pago (rompería la numeración de recibos y el
+      // rastro contable) — se marca como anulado y se excluye de los totales.
+      void: (id, reason) => updateById('payments', id, {
+        voided: true, voidedAt: new Date().toISOString(), voidReason: reason || null
+      })
     },
 
     prices: {
