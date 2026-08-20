@@ -53,6 +53,33 @@ create index idx_clients_branch on clients(branch_id);
 create index idx_clients_branch_active on clients(branch_id, active);
 create index idx_clients_plate on clients(branch_id, plate);
 
+-- Vehículos ADICIONALES de un cliente. El vehículo "principal" sigue viviendo
+-- en clients.plate/vehicle_make/etc (no se toca nada de lo existente); esta
+-- tabla es historial/secundarios, igual que en la referencia visual.
+create table vehicles (
+  id          uuid primary key default gen_random_uuid(),
+  branch_id   uuid not null references branches(id) on delete cascade,
+  client_id   uuid not null references clients(id) on delete cascade,
+  plate       text not null,
+  make        text,
+  model       text,
+  color       text,
+  active      boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+create index idx_vehicles_branch on vehicles(branch_id);
+create index idx_vehicles_client on vehicles(client_id);
+
+alter table vehicles enable row level security;
+create policy vehicles_select on vehicles for select
+  using (auth_is_admin() or branch_id = auth_branch_id());
+create policy vehicles_insert on vehicles for insert
+  with check (auth_is_admin() or branch_id = auth_branch_id());
+create policy vehicles_update on vehicles for update
+  using (auth_is_admin() or branch_id = auth_branch_id())
+  with check (auth_is_admin() or branch_id = auth_branch_id());
+
 create table spots (
   id          uuid primary key default gen_random_uuid(),
   branch_id   uuid not null references branches(id) on delete cascade,

@@ -4,6 +4,8 @@
 
 const AlertsModule = (() => {
 
+  let filterExpiredOnly = false;
+
   async function render() {
     const session  = Auth.getSession();
     const branchId = session.branchId;
@@ -109,6 +111,10 @@ const AlertsModule = (() => {
 
     // Sort by priority
     alerts.sort((a, b) => a.priority - b.priority);
+    // Índice real en el array ya ordenado — renderGroup() lo usa para que los
+    // botones de acción de CUALQUIER grupo (no solo el primero) apunten a la
+    // alerta correcta, en vez de reusar la posición local dentro del grupo.
+    alerts.forEach((a, i) => { a.__idx = i; });
 
     const body = document.getElementById('alerts-body');
 
@@ -128,11 +134,31 @@ const AlertsModule = (() => {
     const warningAlerts  = alerts.filter(a => a.priority === 3 || a.priority === 4);
     const infoAlerts     = alerts.filter(a => a.priority === 5);
 
-    body.innerHTML = `
+    const filterBar = `
+      <div class="tab-list" id="alerts-filter" style="margin-bottom:1rem">
+        <button class="tab-btn ${!filterExpiredOnly?'active':''}" data-filter="all">Todas (${alerts.length})</button>
+        <button class="tab-btn ${filterExpiredOnly?'active':''}" data-filter="expired">❌ Solo vencidos (${expiredAlerts.length})</button>
+      </div>
+    `;
+
+    body.innerHTML = filterExpiredOnly ? `
+      ${filterBar}
+      ${expiredAlerts.length > 0
+        ? renderGroup('❌ Vencidos y críticos', expiredAlerts, 'danger')
+        : `<div class="empty-state" style="padding:3rem 1rem"><div class="empty-icon">✅</div><h3>Sin vencidos</h3><p>No hay contratos vencidos en este momento.</p></div>`}
+    ` : `
+      ${filterBar}
       ${expiredAlerts.length > 0 ? renderGroup('❌ Vencidos y críticos', expiredAlerts, 'danger') : ''}
       ${warningAlerts.length > 0 ? renderGroup('⚠️ Por vencer', warningAlerts, 'warning') : ''}
       ${infoAlerts.length   > 0 ? renderGroup('ℹ️ Información', infoAlerts, 'info') : ''}
     `;
+
+    body.querySelectorAll('#alerts-filter .tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterExpiredOnly = btn.dataset.filter === 'expired';
+        render();
+      });
+    });
 
     // Bind buttons
     body.querySelectorAll('[data-alert-action]').forEach(btn => {
@@ -155,10 +181,7 @@ const AlertsModule = (() => {
       <div style="margin-bottom:1.5rem">
         <h3 style="font-size:.82rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.6rem">${title}</h3>
         <div class="alert-list">
-          ${alertItems.map((a, globalIdx) => {
-            const idx = globalIdx; // approximate, good enough
-            const realIdx = a.__idx !== undefined ? a.__idx : idx;
-            return `
+          ${alertItems.map(a => `
             <div class="alert-item alert-${a.type}">
               <span class="alert-icon">${a.icon}</span>
               <div class="alert-body">
@@ -167,15 +190,14 @@ const AlertsModule = (() => {
               </div>
               <div class="alert-actions">
                 ${a.isPriceAlert ? `
-                  <button class="btn btn-secondary btn-sm" data-alert-action="prices" data-alert-idx="${realIdx}">Ver precios</button>
+                  <button class="btn btn-secondary btn-sm" data-alert-action="prices" data-alert-idx="${a.__idx}">Ver precios</button>
                 ` : `
-                  ${Auth.isManagerOrAbove() ? `<button class="btn btn-success btn-sm" data-alert-action="pay" data-alert-idx="${realIdx}">💰 Cobrar</button>` : ''}
-                  ${a.phone ? `<button class="btn btn-ghost btn-sm" data-alert-action="whatsapp" data-alert-idx="${realIdx}" title="WhatsApp">📲</button>` : ''}
-                  <button class="btn btn-ghost btn-sm" data-alert-action="client" data-alert-idx="${realIdx}">👁</button>
+                  ${Auth.isManagerOrAbove() ? `<button class="btn btn-success btn-sm" data-alert-action="pay" data-alert-idx="${a.__idx}">💰 Cobrar</button>` : ''}
+                  ${a.phone ? `<button class="btn btn-ghost btn-sm" data-alert-action="whatsapp" data-alert-idx="${a.__idx}" title="WhatsApp">📲</button>` : ''}
+                  <button class="btn btn-ghost btn-sm" data-alert-action="client" data-alert-idx="${a.__idx}">👁</button>
                 `}
               </div>
-            </div>`;
-          }).join('')}
+            </div>`).join('')}
         </div>
       </div>
     `;

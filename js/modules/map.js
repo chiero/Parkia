@@ -6,6 +6,15 @@
 const MapModule = (() => {
 
   let currentFloor = 1;
+  let filterOverdue = false;
+
+  // Fijos/móviles/diarios vencidos o por vencer en ≤3 días. Las ocupaciones
+  // por hora no tienen un "vencimiento" fijo, así que no entran en este filtro.
+  function isOverdueOrExpiringSoon(contract) {
+    if (!contract || contract.rentalType === 'hourly') return false;
+    const days = Utils.daysDiff(contract.endDate);
+    return days !== null && days <= 3;
+  }
 
   async function render() {
     const session  = Auth.getSession();
@@ -36,6 +45,12 @@ const MapModule = (() => {
         ).join('')}
       </div>
 
+      <!-- Filtro -->
+      <div class="tab-list" id="map-filter" style="margin-top:.5rem">
+        <button class="tab-btn ${!filterOverdue?'active':''}" data-filter="all">Todos los lugares</button>
+        <button class="tab-btn ${filterOverdue?'active':''}" data-filter="overdue">⚠️ Solo vencidos / por vencer</button>
+      </div>
+
       <!-- Floor grid container -->
       <div id="floor-grid-container"></div>
     `;
@@ -45,6 +60,16 @@ const MapModule = (() => {
       btn.addEventListener('click', () => {
         currentFloor = parseInt(btn.dataset.floor);
         document.querySelectorAll('#floor-tabs .tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        renderFloor(branchId, currentFloor);
+      });
+    });
+
+    // Bind filter
+    document.querySelectorAll('#map-filter .tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterOverdue = btn.dataset.filter === 'overdue';
+        document.querySelectorAll('#map-filter .tab-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         renderFloor(branchId, currentFloor);
       });
@@ -75,9 +100,15 @@ const MapModule = (() => {
     document.getElementById('map-stats').textContent =
       `Piso ${floor}: ${free} libre${free !== 1 ? 's' : ''} / ${occupied} ocupado${occupied !== 1 ? 's' : ''} / ${total} total`;
 
+    const visibleSpots = filterOverdue
+      ? spots.filter(s => isOverdueOrExpiringSoon(contractBySpot[s.id]))
+      : spots;
+
     const container = document.getElementById('floor-grid-container');
-    container.innerHTML = `<div class="floor-grid">${
-      spots.sort((a, b) => a.number - b.number).map(spot => {
+    container.innerHTML = visibleSpots.length === 0 ? `
+      <div class="empty-state" style="padding:2rem"><div class="empty-icon">✅</div><h3>Sin vencimientos en este piso</h3></div>
+    ` : `<div class="floor-grid">${
+      visibleSpots.sort((a, b) => a.number - b.number).map(spot => {
         const contract = contractBySpot[spot.id];
         const client   = contract ? clientsById.get(contract.clientId) : null;
         return buildSpotCard(spot, contract, client, prices, settings);

@@ -115,6 +115,9 @@ const Dashboard = (() => {
 
       </div>
 
+      <!-- Occupancy by floor -->
+      ${occupancyByFloorCard(spots)}
+
       <!-- Alerts summary -->
       ${(expiredCount > 0 || expiringSoon > 0 || priceAlert) ? `
       <div class="card mb-2">
@@ -175,6 +178,39 @@ const Dashboard = (() => {
         </div>
         <div class="table-wrap">
           ${recentPaymentsTable(payments, clientsMap, contractsMap, spotsMap)}
+        </div>
+      </div>
+    `;
+  }
+
+  // 100% síncrona: recibe los spots ya cargados por render() y no llama a Storage.
+  function occupancyByFloorCard(spots) {
+    const floors = [...new Set(spots.map(s => s.floor))].sort((a, b) => a - b);
+    if (floors.length === 0) return '';
+
+    const rows = floors.map(floor => {
+      const floorSpots = spots.filter(s => s.floor === floor);
+      const total    = floorSpots.filter(s => s.status !== 'disabled').length;
+      const occupied = floorSpots.filter(s => s.status === 'occupied').length;
+      const pct = total > 0 ? Math.round((occupied / total) * 100) : 0;
+      return `
+        <div class="occupancy-row" title="Piso ${floor}: ${occupied} de ${total} ocupados (${pct}%)">
+          <span class="occupancy-label">Piso ${floor}</span>
+          <div class="occupancy-track" role="img" aria-label="Piso ${floor}: ${pct}% ocupado">
+            <div class="occupancy-fill" style="width:${pct}%"></div>
+          </div>
+          <span class="occupancy-value">${occupied}/${total} · ${pct}%</span>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="card mb-2">
+        <div class="card-header">
+          <span class="card-title">📊 Ocupación por piso</span>
+        </div>
+        <div class="card-body" style="padding:1rem 1.25rem">
+          <div class="occupancy-chart">${rows}</div>
         </div>
       </div>
     `;

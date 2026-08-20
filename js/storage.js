@@ -203,6 +203,12 @@ const Storage = (() => {
       add: (p) => insert('prices', p)
     },
 
+    vehicles: {
+      getByClient: (cid) => getAll('vehicles', { clientId: cid }),
+      add:         (v)   => insert('vehicles', v),
+      update:      (id, u) => updateById('vehicles', id, u)
+    },
+
     adjustments: {
       getAll:      (bid) => getAll('adjustments', { branchId: bid }),
       getByClient: (cid) => getAll('adjustments', { clientId: cid }),

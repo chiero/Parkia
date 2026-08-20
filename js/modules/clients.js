@@ -372,10 +372,11 @@ const ClientsModule = (() => {
   }
 
   async function showClientDetail(clientId, defaultTab = 'ledger') {
-    const [client, contracts, payments] = await Promise.all([
+    const [client, contracts, payments, vehicles] = await Promise.all([
       Storage.clients.getById(clientId),
       Storage.contracts.getByClient(clientId),
-      Storage.payments.getByClient(clientId)
+      Storage.payments.getByClient(clientId),
+      Storage.vehicles.getByClient(clientId)
     ]);
     if (!client) return;
 
@@ -423,7 +424,7 @@ const ClientsModule = (() => {
 
         <!-- Tab Content Container -->
         <div id="client-tab-content">
-          ${renderClientDetailTab(client, active, spot, status, ledger, payments, defaultTab)}
+          ${renderClientDetailTab(client, active, spot, status, ledger, payments, vehicles, defaultTab)}
         </div>
 
       </div>`,
@@ -445,12 +446,12 @@ const ClientsModule = (() => {
         document.querySelectorAll('#client-detail-tabs .tab-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById('client-tab-content').innerHTML =
-          renderClientDetailTab(client, active, spot, status, ledger, payments, tab);
+          renderClientDetailTab(client, active, spot, status, ledger, payments, vehicles, tab);
       });
     });
   }
 
-  function renderClientDetailTab(client, active, spot, status, ledger, payments, tab) {
+  function renderClientDetailTab(client, active, spot, status, ledger, payments, vehicles, tab) {
     if (tab === 'ledger') {
       return `
         <div style="display:flex;flex-direction:column;gap:1rem">
@@ -519,12 +520,31 @@ const ClientsModule = (() => {
     if (tab === 'info') {
       return `
         <div style="display:flex;flex-direction:column;gap:1rem">
-          <!-- Vehicle -->
+          <!-- Vehicles -->
           <div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:.85rem">
-            <div style="font-size:.7rem;text-transform:uppercase;font-weight:700;color:var(--text-muted);margin-bottom:.5rem">🚗 Vehículo</div>
-            <div style="font-size:1.2rem;font-weight:800;letter-spacing:.05em">${Utils.escapeHtml(client.plate || '—')}</div>
-            <div style="font-size:.82rem;color:var(--text-secondary);margin-top:.2rem">
-              ${Utils.escapeHtml([client.vehicleMake, client.vehicleModel, client.vehicleColor].filter(Boolean).join(' ') || 'Sin datos adicionales')}
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem">
+              <span style="font-size:.7rem;text-transform:uppercase;font-weight:700;color:var(--text-muted)">🚗 Vehículos</span>
+              ${Auth.isManagerOrAbove() ? `<button class="btn btn-ghost btn-sm" onclick="ClientsModule.showAddVehicleModal('${client.id}')">+ Agregar</button>` : ''}
+            </div>
+            <div style="display:flex;flex-direction:column;gap:.5rem">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem">
+                <div>
+                  <span style="font-weight:800;letter-spacing:.05em">${Utils.escapeHtml(client.plate || '—')}</span>
+                  <span style="font-size:.78rem;color:var(--text-secondary);margin-left:.5rem">${Utils.escapeHtml([client.vehicleMake, client.vehicleModel, client.vehicleColor].filter(Boolean).join(' '))}</span>
+                </div>
+                <span class="badge badge-accent">Principal</span>
+              </div>
+              ${vehicles.map(v => `
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;${v.active===false?'opacity:.55':''}">
+                <div>
+                  <span style="font-weight:700;letter-spacing:.05em">${Utils.escapeHtml(v.plate)}</span>
+                  <span style="font-size:.78rem;color:var(--text-secondary);margin-left:.5rem">${Utils.escapeHtml([v.make, v.model, v.color].filter(Boolean).join(' '))}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:.4rem">
+                  ${v.active === false ? '<span class="badge badge-muted">Eliminado</span>' : ''}
+                  ${Auth.isManagerOrAbove() ? `<button class="btn btn-ghost btn-sm" onclick="ClientsModule.toggleVehicleActive('${v.id}','${client.id}')">${v.active===false?'↩️':'🗑️'}</button>` : ''}
+                </div>
+              </div>`).join('')}
             </div>
           </div>
 
@@ -638,6 +658,58 @@ const ClientsModule = (() => {
     Utils.closeModal();
     Utils.showToast('Ajuste registrado ✓', 'success');
     await showClientDetail(clientId, 'ledger');
+  }
+
+  function showAddVehicleModal(clientId) {
+    Utils.showModal('Agregar vehículo', `
+      <div style="display:flex;flex-direction:column;gap:1rem">
+        <div class="form-group">
+          <label class="form-label">Patente <span class="required">*</span></label>
+          <input class="form-control" id="vf-plate" placeholder="Ej: AB123CD" style="text-transform:uppercase;font-weight:700;letter-spacing:.05em">
+        </div>
+        <div class="form-row cols-2">
+          <div class="form-group">
+            <label class="form-label">Marca</label>
+            <input class="form-control" id="vf-make" placeholder="Toyota">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Modelo</label>
+            <input class="form-control" id="vf-model" placeholder="Corolla">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Color</label>
+          <input class="form-control" id="vf-color" placeholder="Blanco">
+        </div>
+      </div>
+    `, [
+      { id: 'save-vehicle', label: 'Agregar', cls: 'btn-primary', close: false, handler: () => saveVehicle(clientId) },
+      { id: 'cancel-vehicle', label: 'Cancelar', cls: 'btn-secondary', handler: () => {} }
+    ]);
+  }
+
+  async function saveVehicle(clientId) {
+    const plate = document.getElementById('vf-plate')?.value.trim().toUpperCase();
+    const make  = document.getElementById('vf-make')?.value.trim() || '';
+    const model = document.getElementById('vf-model')?.value.trim() || '';
+    const color = document.getElementById('vf-color')?.value.trim() || '';
+
+    if (!plate) { Utils.showToast('La patente es obligatoria', 'error'); return; }
+
+    const session = Auth.getSession();
+    await Storage.vehicles.add({ branchId: session.branchId, clientId, plate, make, model, color, active: true });
+
+    Utils.closeModal();
+    Utils.showToast('Vehículo agregado ✓', 'success');
+    await showClientDetail(clientId, 'info');
+  }
+
+  async function toggleVehicleActive(vehicleId, clientId) {
+    const current = (await Storage.vehicles.getByClient(clientId)).find(v => v.id === vehicleId);
+    if (!current) return;
+    await Storage.vehicles.update(vehicleId, { active: current.active === false ? true : false });
+    Utils.showToast(current.active === false ? 'Vehículo reactivado' : 'Vehículo eliminado', 'success');
+    await showClientDetail(clientId, 'info');
   }
 
   async function sendAccountSummaryWhatsApp(clientId) {
@@ -754,6 +826,8 @@ const ClientsModule = (() => {
     showNewClientModal,
     showEditClientModal,
     showClientDetail,
+    showAddVehicleModal,
+    toggleVehicleActive,
     sendAccountSummaryWhatsApp,
     printAccountStatement
   };
