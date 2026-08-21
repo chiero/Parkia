@@ -13,6 +13,15 @@ const Utils = (() => {
     return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
   }
 
+  const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+  function formatMonthYear(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr + (String(dateStr).includes('T') ? '' : 'T00:00:00'));
+    if (isNaN(d.getTime())) return '';
+    return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+  }
+
   function formatDateLong(date) {
     if (!date) return '—';
     const d = typeof date === 'string' ? new Date(date + (date.includes('T') ? '' : 'T00:00:00')) : date;
@@ -302,7 +311,7 @@ const Utils = (() => {
   }
 
   return {
-    formatDate, formatDateLong, toInputDate, daysDiff, addMonths, addDays,
+    formatDate, formatDateLong, formatMonthYear, toInputDate, daysDiff, addMonths, addDays,
     formatCurrency, normalizePhone, whatsappUrl,
     contractStatus, statusBadge, rentalTypeLabel, periodLabel, methodLabel,
     formatDuration, calculateHourlyFee,

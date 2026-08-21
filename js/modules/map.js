@@ -702,6 +702,7 @@ const MapModule = (() => {
             <input class="form-control" type="date" id="assign-end">
           </div>
         </div>
+        <span class="form-hint" id="assign-period-label"></span>
 
         <div class="form-group">
           <label class="form-label">Precio acordado <span class="required">*</span></label>
@@ -753,6 +754,9 @@ const MapModule = (() => {
     } else {
       endInput.value = Utils.addDays(start, 0); // same day
     }
+
+    const labelEl = document.getElementById('assign-period-label');
+    if (labelEl) labelEl.textContent = period === 'monthly' ? `Período: ${Utils.formatMonthYear(start)}` : '';
   }
 
   async function confirmAssign(spot) {
